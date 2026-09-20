@@ -1,0 +1,24 @@
+config_version=5
+
+[application]
+config/name="PLAYER TWO — Прыжок в облака"
+run/main_scene="res://main.tscn"
+config/features=PackedStringArray("4.6", "GL Compatibility")
+config/description="Локальный MVP: чиби-персонажи и прыжки по платформам."
+
+[display]
+window/size/viewport_width=1100
+window/size/viewport_height=780
+window/size/window_width_override=1100
+window/size/window_height_override=780
+window/stretch/mode="canvas_items"
+
+[rendering]
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
+textures/default_filters/use_nearest_mipmap_filter=false
+anti_aliasing/quality/msaa_3d=1
+environment/defaults/default_clear_color=Color(0.47, 0.79, 0.95, 1)
+
+[physics]
+common/physics_ticks_per_second=60

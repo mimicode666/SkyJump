@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="ru">
+<head>
+ <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+ <meta name="theme-color" content="#060916"><title>PLAYER TWO — Эмиль и Света</title>
+ <meta name="description" content="Эмиль и Света. Локальное меню выбора персонажей с интерактивным 3D-просмотром.">
+ <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='5' fill='%23060916'/%3E%3Cpath d='M7 9h10v7H7v8M21 9h5v15h-5' fill='none' stroke='%238caaff' stroke-width='3'/%3E%3C/svg%3E">
+ <link rel="stylesheet" href="/style.css">
+ <script type="importmap">{"imports":{"three":"/vendor/three.module.js","three/addons/":"/vendor/addons/"}}</script>
+ <script type="module" src="/app.js"></script>
+</head>
+<body data-screen="start">
+ <div class="atmosphere" aria-hidden="true"><div class="halo"></div><div class="horizon"></div></div>
+ <div class="shell">
+  <header><a class="wordmark" href="#" aria-label="PLAYER TWO — на стартовый экран">P<span>Ⅱ</span></a><span class="edition">ДВА ИГРОКА · ОДНА ИСТОРИЯ</span></header>
+  <main>
+   <div id="portraits" class="portraits"><img src="/portraits/emil.png" alt="Эмиль" width="1254" height="1254"><img src="/portraits/sveta.png" alt="Света" width="1254" height="1254"></div>
+   <section id="start" aria-labelledby="title">
+    <div class="start-copy"><p class="eyebrow"><span class="line"></span> ГЛАВНОЕ МЕНЮ</p><h1 id="title">PLAYER<br><span>TWO</span><sup>02</sup></h1><button id="begin" class="begin"><span class="play-symbol">▷</span> Начать <span class="key">↵</span></button><p class="start-hint">Ваш персонаж уже здесь.</p></div>
+    <div class="start-bottom"><span>01 / 02</span><span>ВЫБОР ПЕРСОНАЖА</span><span class="tiny-cross">＋</span></div>
+   </section>
+   <section id="selection" aria-labelledby="selection-title" hidden>
+    <div class="selection-heading"><button id="back" class="back">← <span>Главное меню</span></button><h1 id="selection-title">Выбор <em>персонажа</em></h1><p>Ваша очередь быть в центре.</p></div>
+    <div class="cards" role="group" aria-label="Персонажи">
+     <button class="character" data-character="emil" aria-pressed="false"><span class="card-top">ИГРОК 1 <span class="card-mark">✓</span></span><strong>Эмиль</strong><span class="card-bottom"><span class="card-state">Выбрать</span><span>01</span></span></button>
+     <button class="character" data-character="sveta" aria-pressed="false"><span class="card-top">ИГРОК 2 <span class="card-mark">✓</span></span><strong>Света</strong><span class="card-bottom"><span class="card-state">Выбрать</span><span>02</span></span></button>
+    </div>
+    <div class="identity" aria-hidden="true" hidden><span id="player-number">01</span><div><small id="player-label">ИГРОК 1</small><strong id="player-name">Эмиль</strong></div></div>
+    <div class="viewer-footer" hidden><div class="controls"><button id="reset" title="Вернуть исходный ракурс"><span>⟲</span> Исходный ракурс</button><button id="rotate" aria-pressed="false"><span>↻</span> Автовращение <i></i></button></div><p class="help"><span class="desktop-help">Тяните мышью — вращение <b>·</b> Колёсико — масштаб</span><span class="touch-help">Один палец — вращение <b>·</b> Щипок — масштаб</span></p></div>
+   </section>
+   <div id="viewport" hidden aria-label="Интерактивная 3D-модель персонажа"><canvas id="canvas" tabindex="0" aria-label="3D-просмотр. Стрелки — вращение, плюс и минус — масштаб, 0 — исходный ракурс."></canvas><div class="stage-corner tl"></div><div class="stage-corner br"></div></div>
+   <div id="load-status" hidden role="status" aria-live="polite"><span class="loading-orbit"></span><span id="load-message">Загрузка персонажа…</span><button id="retry" hidden>Повторить</button></div>
+  </main>
+  <footer><span class="footer-symbols" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="M10 3 18 17H2Z"/></svg><svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="7"/></svg><svg viewBox="0 0 20 20"><path d="m3 3 14 14M17 3 3 17"/></svg><svg viewBox="0 0 20 20"><path d="M3 3h14v14H3Z"/></svg></span><span>PLAYER TWO</span></footer>
+ </div>
+ <noscript>Для 3D-просмотра включите JavaScript в браузере.</noscript>
+</body>
+</html>

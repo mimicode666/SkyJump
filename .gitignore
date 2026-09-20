@@ -1,0 +1,14 @@
+node_modules/
+.pnpm-store/
+.local/
+.tools/
+game/.godot/
+.sites-runtime/
+qa/
+inspection/**/*.webp
+inspection/*.webp
+.env
+.env.*
+!.env.example
+*.pem
+*.key

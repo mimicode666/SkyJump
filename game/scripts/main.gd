@@ -246,9 +246,6 @@ func _setup_ui() -> void:
 	record_label = _label("", 16)
 	record_label.position = Vector2(40, 78)
 	hud.add_child(record_label)
-	var stone_hint := _label("Камень: трескается на первом, ломается на втором приземлении", 15)
-	stone_hint.position = Vector2(40, 105)
-	hud.add_child(stone_hint)
 	var pause_button := _button("Пауза", pause_game)
 	pause_button.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
 	pause_button.position = Vector2(-195, 28)
@@ -352,7 +349,7 @@ func start_game() -> void:
 	overlay.hide()
 	hud.show()
 	score_label.text = "0 м"
-	record_label.text = "Лучший за сессию: %d м" % session_best
+	record_label.text = "Рекорд: %d м" % session_best
 
 func _physics_process(delta: float) -> void:
 	if mode != "playing":
@@ -439,7 +436,7 @@ func finish_game() -> void:
 	mode = "gameover"
 	session_best = maxi(session_best, int(highest * 10))
 	overlay_title.text = "Ещё один прыжок?"
-	overlay_text.text = "Высота: %d м\nЛучший за сессию: %d м" % [int(highest * 10), session_best]
+	overlay_text.text = "Высота: %d м\nРекорд: %d м" % [int(highest * 10), session_best]
 	resume_button.hide()
 	overlay.show()
 

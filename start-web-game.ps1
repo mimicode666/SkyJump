@@ -27,7 +27,7 @@ try {
         if (-not $ready) { throw "Server failed to start. See $logDir\web-game-error.log" }
         Set-Content -LiteralPath (Join-Path $logDir 'web-game.pid') -Value $process.Id
     }
-    Write-Host "PLAYER TWO is running: $siteUrl"
+    Write-Host "SkyJump is running: $siteUrl"
     if (-not $NoBrowser) { Start-Process $siteUrl }
 } catch {
     Write-Host $_.Exception.Message -ForegroundColor Red

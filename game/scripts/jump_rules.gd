@@ -1,9 +1,10 @@
 extends RefCounted
 ## A narrow 3D playfield keeps the first prototype easy to control.
-const GRAVITY: float = 21.0
-const JUMP_SPEED: float = 10.3
-const MOVE_SPEED: float = 5.4
-const ACCELERATION: float = 24.0
+const GRAVITY: float = 24.0
+const JUMP_SPEED: float = 11.2
+const BOOST_SPEED: float = 16.2
+const MOVE_SPEED: float = 6.6
+const ACCELERATION: float = 42.0
 const HALF_WIDTH: float = 4.6
 const PLATFORM_RADIUS: float = 1.04
 const FOOT_RADIUS: float = 0.18
@@ -11,6 +12,9 @@ const MIN_HEIGHT_STEP: float = 1.8
 const MAX_HEIGHT_STEP: float = 2.2
 const MAX_STEP_X: float = 2.85
 const PLATFORM_EDGE: float = 3.55
+
+static func wrap_x(x: float, half_width: float) -> float:
+	return wrapf(x, -half_width, half_width)
 
 static func lands(previous_y: float, next_y: float, velocity_y: float, player_x: float, platform: Vector3) -> bool:
 	return velocity_y <= 0.0 and previous_y >= platform.y and next_y <= platform.y and absf(player_x - platform.x) <= PLATFORM_RADIUS + FOOT_RADIUS

@@ -1,10 +1,14 @@
 extends RefCounted
-const PATHS = {"emil": "res://assets/models/emil-lite.glb", "sveta": "res://assets/models/sveta-lite.glb"}
+const Catalog = preload("res://scripts/catalog.gd")
 var cache: Dictionary = {}
 
 func create_character(id: String, height: float = 1.7) -> Node3D:
 	if not cache.has(id):
-		cache[id] = load(PATHS[id])
+		for entry in Catalog.CHARACTERS:
+			if entry.id == id:
+				cache[id] = load(entry.model)
+		if not cache.has(id):
+			return null
 	var packed: PackedScene = cache[id] as PackedScene
 	if packed == null:
 		return null

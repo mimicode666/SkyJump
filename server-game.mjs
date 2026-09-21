@@ -22,5 +22,5 @@ const server = http.createServer((req, res) => {
     stream.pipe(res);
   });
 });
-server.listen(4174, '127.0.0.1', () => console.log('PLAYER TWO game — http://127.0.0.1:4174/'));
+server.listen(4174, '127.0.0.1', () => console.log('SkyJump game — http://127.0.0.1:4174/'));
 server.on('error', err => { console.error(err.message); process.exitCode = 1; });

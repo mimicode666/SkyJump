@@ -2,6 +2,10 @@ extends Node3D
 ## A platform owns its durability and appearance; the level owns collision order.
 const Rules = preload("res://scripts/jump_rules.gd")
 var stone: bool = false
+var kind: String = "normal"
+var origin_x: float = 0.0
+var motion_time: float = 0.0
+var motion_amplitude: float = 0.0
 var hits: int = 0
 var active: bool = true
 var parts: Array[MeshInstance3D] = []
@@ -11,9 +15,19 @@ var break_elapsed: float = -1.0
 var break_origin: Vector3
 var break_rotation: float = 0.0
 
-func configure(color: Color, is_stone: bool) -> void:
+func configure(color: Color, is_stone: bool = false, type_id: String = "normal") -> void:
 	stone = is_stone
+	kind = "stone" if stone else type_id
+	origin_x = position.x
+	motion_time = position.y * 1.7
+	motion_amplitude = minf(0.7, maxf(0.0, Rules.HALF_WIDTH - Rules.PLATFORM_RADIUS - absf(origin_x)))
 	var base_color: Color = Color("85919f") if stone else color
+	if kind == "moving":
+		base_color = Color("12bed1")
+	elif kind == "boost":
+		base_color = Color("ff7bb8")
+	elif kind == "spikes":
+		base_color = Color("dc5356")
 	var disk := CylinderMesh.new()
 	disk.top_radius = Rules.PLATFORM_RADIUS
 	disk.bottom_radius = Rules.PLATFORM_RADIUS * (0.84 if stone else 0.9)
@@ -40,7 +54,37 @@ func configure(color: Color, is_stone: bool) -> void:
 		ring.outer_radius = Rules.PLATFORM_RADIUS
 		ring.rings = 32
 		ring.ring_segments = 8
-		_piece(ring, Vector3(0, -0.04, 0), color.lightened(0.22))
+		_piece(ring, Vector3(0, -0.04, 0), base_color.lightened(0.22))
+	if kind == "spikes":
+		for x in [-0.62, 0.0, 0.62]:
+			for z in [-0.35, 0.32]:
+				var spike := CylinderMesh.new()
+				spike.top_radius = 0.0
+				spike.bottom_radius = 0.2
+				spike.height = 0.48
+				spike.radial_segments = 6
+				_piece(spike, Vector3(x, 0.24, z), Color("f7eded"))
+	elif kind == "boost":
+		# Raised spring rings remain identifiable without relying on colour.
+		for i in range(3):
+			var spring := TorusMesh.new()
+			spring.inner_radius = 0.23
+			spring.outer_radius = 0.33
+			spring.rings = 16
+			spring.ring_segments = 6
+			_piece(spring, Vector3(0, 0.05 + i * 0.09, 0), Color("fff1a8"))
+	elif kind == "moving":
+		for sign_x in [-1, 1]:
+			for sign_z in [-1, 1]:
+				var stripe := BoxMesh.new()
+				stripe.size = Vector3(0.36, 0.025, 0.085)
+				var part := _piece(stripe, Vector3(sign_x * 0.36, 0.025, sign_z * 0.12), Color("edffff"))
+				part.rotation.y = sign_x * sign_z * 0.65
+
+func advance_motion(delta: float) -> void:
+	if kind == "moving" and active:
+		motion_time += delta * 1.55
+		position.x = origin_x + sin(motion_time) * motion_amplitude
 
 func _piece(mesh: Mesh, offset: Vector3, color: Color) -> MeshInstance3D:
 	var part := MeshInstance3D.new()

@@ -2,6 +2,7 @@ extends Node3D
 
 const Rules = preload("res://scripts/jump_rules.gd")
 const Characters = preload("res://scripts/characters.gd")
+const JumpPlatform = preload("res://scripts/jump_platform.gd")
 const COLORS = [Color("65b333"), Color("efaa25"), Color("935aca")]
 var characters = Characters.new()
 var selected: String = "emil"
@@ -35,6 +36,11 @@ var bounce_flash: float = 0.0
 var session_best: int = 0
 var landings: int = 0
 var last_landing_y: float = 0.0
+var generated_count: int = 0
+var last_generated: Vector3 = Vector3.ZERO
+var before_last_generated: Vector3 = Vector3.INF
+var last_was_stone: bool = false
+var broken_platforms: Array[Node3D] = []
 var automated: bool = false
 
 func _ready() -> void:
@@ -130,32 +136,30 @@ func _setup_world() -> void:
 	_update_camera(1.0)
 	_add_platform(Vector3(1.5, 0, 0), 0)
 
-func _add_platform(pos: Vector3, index: int) -> void:
-	var node := Node3D.new()
+func _add_platform(pos: Vector3, index: int, stone: bool = false) -> void:
+	var node := JumpPlatform.new()
 	node.position = pos
-	var top := MeshInstance3D.new()
-	var disk := CylinderMesh.new()
-	disk.top_radius = Rules.PLATFORM_RADIUS
-	disk.bottom_radius = Rules.PLATFORM_RADIUS * 0.9
-	disk.height = 0.3
-	disk.radial_segments = 32
-	top.mesh = disk
-	top.position.y = -0.15
-	top.material_override = material(COLORS[index % COLORS.size()])
-	node.add_child(top)
-	var rim := MeshInstance3D.new()
-	var ring := TorusMesh.new()
-	ring.inner_radius = Rules.PLATFORM_RADIUS - 0.09
-	ring.outer_radius = Rules.PLATFORM_RADIUS
-	ring.rings = 32
-	ring.ring_segments = 8
-	rim.mesh = ring
-	rim.position.y = -0.04
-	rim.material_override = material(COLORS[index % COLORS.size()].lightened(0.22))
-	node.add_child(rim)
+	node.configure(COLORS[index % COLORS.size()], stone)
 	world.add_child(node)
 	platforms.append(pos)
 	platform_nodes.append(node)
+
+func _generate_platform() -> void:
+	var next: Vector3 = Rules.next_platform(last_generated, rng, before_last_generated)
+	var stone: bool = generated_count >= 4 and not last_was_stone and rng.randf() < 0.28
+	_add_platform(next, generated_count, stone)
+	before_last_generated = last_generated
+	last_generated = next
+	last_was_stone = stone
+	generated_count += 1
+
+func _clear_platforms() -> void:
+	for node in world.get_children():
+		world.remove_child(node)
+		node.queue_free()
+	platforms.clear()
+	platform_nodes.clear()
+	broken_platforms.clear()
 
 func _setup_ui() -> void:
 	var layer := CanvasLayer.new()
@@ -240,6 +244,9 @@ func _setup_ui() -> void:
 	record_label = _label("", 16)
 	record_label.position = Vector2(40, 78)
 	hud.add_child(record_label)
+	var stone_hint := _label("Камень: трескается на первом, ломается на втором приземлении", 15)
+	stone_hint.position = Vector2(40, 105)
+	hud.add_child(stone_hint)
 	var pause_button := _button("Ⅱ  Пауза", pause_game)
 	pause_button.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
 	pause_button.position = Vector2(-195, 28)
@@ -324,10 +331,11 @@ func start_game() -> void:
 	mode = "playing"
 	touch_left = false
 	touch_right = false
-	for node in platform_nodes:
-		node.queue_free()
-	platforms.clear()
-	platform_nodes.clear()
+	_clear_platforms()
+	generated_count = 1
+	last_generated = Vector3.ZERO
+	before_last_generated = Vector3.INF
+	last_was_stone = false
 	highest = 0
 	landings = 0
 	last_landing_y = 0.0
@@ -336,8 +344,8 @@ func start_game() -> void:
 	select_character(selected)
 	velocity = Vector2(0, Rules.JUMP_SPEED)
 	_add_platform(Vector3.ZERO, 0)
-	while platforms.back().y < 18:
-		_add_platform(Rules.next_platform(platforms.back(), rng), platforms.size())
+	while last_generated.y < 18:
+		_generate_platform()
 	menu.hide()
 	overlay.hide()
 	hud.show()
@@ -362,12 +370,18 @@ func _physics_process(delta: float) -> void:
 			bounce_flash = 1.0
 			landings += 1
 			last_landing_y = platforms[i].y
+			if platform_nodes[i].register_landing():
+				var broken: Node3D = platform_nodes[i]
+				platforms.remove_at(i)
+				platform_nodes.remove_at(i)
+				broken.break_apart()
+				broken_platforms.append(broken)
 			break
 	highest = maxf(highest, player.position.y)
 	camera_height = maxf(camera_height, highest + 1.0)
 	score_label.text = "%d м" % int(highest * 10.0)
-	while platforms.back().y < camera_height + 12.0:
-		_add_platform(Rules.next_platform(platforms.back(), rng), int(platforms.back().y / Rules.HEIGHT_STEP) + 1)
+	while last_generated.y < camera_height + 12.0:
+		_generate_platform()
 	while platforms.size() > 0 and platforms[0].y < camera_height - 10:
 		platforms.pop_front()
 		platform_nodes.pop_front().queue_free()
@@ -384,10 +398,12 @@ func _process(delta: float) -> void:
 		for i in range(platforms.size()):
 			var p: Vector3 = platforms[i]
 			var overlaps: bool = player.position.y < p.y - 0.05 and player.position.y + 1.6 > p.y and absf(player.position.x - p.x) < 1.4
-			for part in platform_nodes[i].get_children():
-				var mat: StandardMaterial3D = part.material_override
-				mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA if overlaps else BaseMaterial3D.TRANSPARENCY_DISABLED
-				mat.albedo_color.a = 0.2 if overlaps else 1.0
+			platform_nodes[i].set_obscured(overlaps)
+		for i in range(broken_platforms.size() - 1, -1, -1):
+			if not is_instance_valid(broken_platforms[i]):
+				broken_platforms.remove_at(i)
+			else:
+				broken_platforms[i].animate_break(delta)
 	_update_camera(delta)
 	for cloud in clouds.get_children():
 		if cloud.position.y < camera_height - 9:
@@ -427,10 +443,7 @@ func finish_game() -> void:
 
 func show_menu() -> void:
 	mode = "menu"
-	for node in platform_nodes:
-		node.queue_free()
-	platform_nodes.clear()
-	platforms.clear()
+	_clear_platforms()
 	_add_platform(Vector3(1.5, 0, 0), 0)
 	player.scale = Vector3.ONE
 	camera_height = 2.3
@@ -457,14 +470,40 @@ func _run_self_test() -> void:
 	var test_rng := RandomNumberGenerator.new()
 	test_rng.seed = 123
 	var pos := Vector3.ZERO
+	var before := Vector3.INF
 	for i in range(1000):
-		var next: Vector3 = Rules.next_platform(pos, test_rng)
+		var next: Vector3 = Rules.next_platform(pos, test_rng, before)
 		assert(absf(next.x - pos.x) <= Rules.MAX_STEP_X + 0.001)
 		assert(next.y - pos.y < Rules.JUMP_SPEED * Rules.JUMP_SPEED / (2.0 * Rules.GRAVITY))
+		before = pos
 		pos = next
 	assert(Rules.lands(2.0, 1.4, -2.0, 0.5, Vector3(0, 1.6, 0)))
 	assert(not Rules.lands(1.4, 2.0, 2.0, 0.0, Vector3(0, 1.6, 0)))
 	assert(not Rules.lands(2.0, 1.4, -2.0, 3.0, Vector3(0, 1.6, 0)))
+	# Bounce on one isolated stone twice using real physics, then verify removal.
+	start_game()
+	_clear_platforms()
+	_add_platform(Vector3.ZERO, 0, true)
+	var stone = platform_nodes[0]
+	for frame in range(80):
+		await get_tree().physics_frame
+		if stone.hits == 1:
+			break
+	assert(stone.hits == 1 and platforms.size() == 1)
+	pause_game()
+	var stone_hits: int = stone.hits
+	await get_tree().physics_frame
+	assert(stone.hits == stone_hits)
+	resume_game()
+	for frame in range(80):
+		await get_tree().physics_frame
+		if stone.hits == 2:
+			break
+	assert(stone.hits == 2 and platforms.is_empty() and velocity.y > 0.0)
+	assert(broken_platforms.size() == 1)
+	show_menu()
+	assert(broken_platforms.is_empty())
+	print("STONE_PHYSICS_OK first=cracked second=removed bounce=preserved reset=clean")
 	assert(visual != null)
 	select_character("sveta")
 	assert(visual != null)
@@ -498,7 +537,7 @@ func _run_self_test() -> void:
 			break
 	Input.action_release("move_left")
 	Input.action_release("move_right")
-	assert(landings >= 2, "Pilot failed to bounce twice")
+	assert(landings >= 20, "Pilot did not complete enough of the harder route")
 	assert(platforms.size() < 24, "Unbounded platform count")
 	print("MVP_PLAYTEST height=", highest, " landings=", landings, " platforms=", platforms.size())
 	print("MVP_PERFORMANCE fps=", Engine.get_frames_per_second(), " rendered_primitives=", Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME))

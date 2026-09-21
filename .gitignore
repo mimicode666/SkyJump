@@ -12,3 +12,8 @@ inspection/*.webp
 !.env.example
 *.pem
 *.key
+
+# Unrelated local document work; keep out of game version history.
+/build_objection.py
+/build_objections.py
+/tmp_zagretdinov/

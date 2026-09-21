@@ -5,6 +5,7 @@ node_modules/
 game/.godot/
 .sites-runtime/
 qa/
+/build/
 inspection/**/*.webp
 inspection/*.webp
 .env

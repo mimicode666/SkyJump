@@ -22,6 +22,12 @@ func create_character(id: String, height: float = 1.7) -> Node3D:
 	pivot.add_child(model)
 	model.position = -Vector3(box.get_center().x, box.position.y, box.get_center().z)
 	pivot.scale = Vector3.ONE * s
+	for animation_player in model.find_children("*", "AnimationPlayer", true, false):
+		for animation_name in animation_player.get_animation_list():
+			if animation_name == "RESET": continue
+			animation_player.get_animation(animation_name).loop_mode = Animation.LOOP_LINEAR
+			animation_player.play(animation_name)
+			break
 	return pivot
 
 func _bounds(node: Node, parent_transform: Transform3D) -> AABB:

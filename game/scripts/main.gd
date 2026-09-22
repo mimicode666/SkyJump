@@ -3,11 +3,14 @@ extends Node3D
 const Rules = preload("res://scripts/jump_rules.gd")
 const Characters = preload("res://scripts/characters.gd")
 const JumpPlatform = preload("res://scripts/jump_platform.gd")
+const Wallet = preload("res://scripts/wallet.gd")
+const Coin = preload("res://scripts/coin.gd")
+const WalletBadge = preload("res://scripts/wallet_badge.gd")
 const Catalog = preload("res://scripts/catalog.gd")
 const TouchDirection = preload("res://scripts/touch_direction.gd")
 const COLORS = [Color("65b333"), Color("efaa25"), Color("935aca")]
 var characters = Characters.new()
-var selected: String = "emil"
+var selected: String = Catalog.CHARACTERS[0].id
 var mode: String = "menu"
 var player: Node3D
 var visual: Node3D
@@ -52,17 +55,25 @@ var selected_map := "clouds"
 var sky_material: ProceduralSkyMaterial
 var cloud_material: StandardMaterial3D
 var last_was_moving := false
+var wallet: RefCounted
+var coin_nodes: Array[Node3D] = []
+var next_coin_index := 6
+var run_coins := 0
+var run_seconds := 0.0
+var current_pace := 1.0
 
 func _ready() -> void:
 	Engine.max_fps = 60
+	automated = "--self-test" in OS.get_cmdline_user_args()
+	wallet = Wallet.new("user://qa-run-wallet.cfg" if automated else "user://wallet.cfg")
 	_rng_setup()
 	_setup_world()
 	_setup_ui()
-	select_character("emil")
+	select_character(selected)
 	get_window().size_changed.connect(_queue_layout)
 	_resize_ui()
-	if "--self-test" in OS.get_cmdline_user_args():
-		automated = true
+	if automated:
+		print("QA_WALLET_LOADED=", wallet.balance)
 		call_deferred("_run_self_test")
 
 func _rng_setup() -> void:
@@ -168,18 +179,43 @@ func _generate_platform() -> void:
 		elif roll > 0.85:
 			kind = "boost"
 	_add_platform(next, generated_count, kind == "stone", kind)
-	# Hazards are optional side platforms; the main route always remains safe.
-	if generated_count >= 6 and rng.randf() < 0.20:
-		var hazard_x: float = -3.45 if next.x >= 0 else 3.45
-		if absf(hazard_x - next.x) > 3.0:
-			_add_platform(Vector3(hazard_x, next.y, 0), generated_count, false, "spikes")
+	if generated_count >= next_coin_index:
+		_spawn_coin(platform_nodes.back())
+		next_coin_index = generated_count + rng.randi_range(5, 8)
+	# Extra side platforms offer alternate landings; hazards never replace the main route.
+	if generated_count >= 6:
+		var side_roll: float = rng.randf()
+		var side_x: float = -3.45 if next.x >= 0 else 3.45
+		if side_roll < 0.42 and absf(side_x - next.x) > 3.0:
+			_add_platform(Vector3(side_x, next.y, 0), generated_count, false, "spikes" if side_roll < 0.20 else "normal")
 	before_last_generated = last_generated
 	last_generated = next
 	last_was_stone = kind == "stone"
 	last_was_moving = kind == "moving"
 	generated_count += 1
 
+func _spawn_coin(platform: Node3D) -> void:
+	var coin := Coin.new()
+	platform.add_child(coin)
+	coin.position = Vector3(0, 1.05, 0)
+	coin_nodes.append(coin)
+
+func _collect_coins() -> void:
+	for i in range(coin_nodes.size() - 1, -1, -1):
+		var coin = coin_nodes[i]
+		if not is_instance_valid(coin):
+			coin_nodes.remove_at(i)
+		elif coin.collect(player.position):
+			coin_nodes.remove_at(i)
+			run_coins += 1
+			wallet.earn()
+			_update_wallet_labels()
+
+func _update_wallet_labels() -> void:
+	ui.wallet_badge.update_balance(wallet.balance, wallet.persistent)
+
 func _clear_platforms() -> void:
+	coin_nodes.clear()
 	for node in world.get_children():
 		world.remove_child(node)
 		node.queue_free()
@@ -281,6 +317,20 @@ func _setup_ui() -> void:
 	record_label = _label("", 16)
 	record_label.position = Vector2(40, 78)
 	hud.add_child(record_label)
+	var fall_boundary := ColorRect.new()
+	fall_boundary.color = Color(0.76, 0.34, 0.35, 0.11)
+	fall_boundary.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hud.add_child(fall_boundary)
+	var fall_edge := ColorRect.new()
+	fall_edge.color = Color(0.76, 0.34, 0.35, 0.45)
+	fall_edge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	fall_edge.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
+	fall_edge.offset_bottom = 2
+	fall_boundary.add_child(fall_edge)
+	var fall_caption := _label("Граница падения", 13)
+	fall_caption.position = Vector2(12, 5)
+	fall_caption.modulate = Color("955d69")
+	fall_boundary.add_child(fall_caption)
 	var pause_button := _button("Пауза", pause_game)
 	pause_button.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
 	pause_button.position = Vector2(-195, 28)
@@ -322,13 +372,17 @@ func _setup_ui() -> void:
 	column.add_child(resume_button)
 	column.add_child(_button("Ещё раз", start_game))
 	column.add_child(_button("Главное меню", show_menu))
+	# Above every menu/scroll list, so the balance cannot be covered by cards.
+	var wallet_badge := WalletBadge.new()
+	root.add_child(wallet_badge)
 	ui = {"title": title, "heading": heading, "subtitle": subtitle, "pickers": pickers,
 		"bottom": menu_bottom, "menu_hint": menu_hint, "pause": pause_button,
 		"hint": hint, "column": column, "pads": touch_pads,
-		"character_choice": character_choice, "map_choice": map_choice, "options": options, "option_list": option_list}
+		"wallet_badge": wallet_badge, "fall_boundary": fall_boundary, "character_choice": character_choice, "map_choice": map_choice, "options": options, "option_list": option_list}
 	hud.hide()
 	overlay.hide()
 	_open_menu_page("home")
+	_update_wallet_labels()
 
 func _queue_layout() -> void:
 	if not layout_pending:
@@ -354,28 +408,32 @@ func _resize_ui() -> void:
 	compact = portrait or area.y < 560 or area.x < 760
 	touch_controls = compact or DisplayServer.is_touchscreen_available()
 	var margin: float = 22.0 if compact else 46.0
+	var short_landscape: bool = compact and not portrait
 	var menu_width: float = area.x - margin * 2 if portrait else minf(440, area.x * 0.52 - margin)
-	_place(ui.title, Vector2(margin, 24), Vector2(menu_width, 24))
+	ui.character_choice.add_theme_font_size_override("font_size", 17 if compact else 20)
+	_place(ui.wallet_badge, Vector2(area.x - margin - 164, 16 if compact else 24) if mode == "menu" else Vector2(margin, 91 if compact else 104), Vector2(164, 34))
+	_place(ui.title, Vector2(margin, 16 if short_landscape else 24), Vector2(menu_width, 24))
 	ui.heading.add_theme_font_size_override("font_size", 30 if compact else 44)
-	_place(ui.heading, Vector2(margin, 53), Vector2(menu_width, 52))
+	_place(ui.heading, Vector2(margin, 44 if short_landscape else 53), Vector2(menu_width, 52))
 	ui.subtitle.text = "Выберите героя и отправляйтесь в небо" if menu_page == "home" else ("Нажмите, чтобы выбрать героя" if menu_page == "characters" else "Нажмите, чтобы сменить фон")
 	ui.subtitle.add_theme_font_size_override("font_size", 16 if compact else 20)
 	ui.subtitle.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_place(ui.subtitle, Vector2(margin, 98 if compact else 117), Vector2(menu_width, 42))
-	_place(ui.pickers, Vector2(margin, 145 if compact else 195), Vector2(menu_width, 120))
+	_place(ui.subtitle, Vector2(margin, 90 if short_landscape else (98 if compact else 117)), Vector2(menu_width, 42))
+	_place(ui.pickers, Vector2(margin, 148 if short_landscape else (159 if compact else 195)), Vector2(menu_width, 120))
 	for button in [ui.character_choice, ui.map_choice]:
 		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		button.custom_minimum_size = Vector2(0, 54)
 	_place(model_label, Vector2(margin, 272 if compact else 330), Vector2(menu_width, 46))
 	model_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	var bottom_height: float = 132 if portrait else (115 if compact else 155)
+	var bottom_height: float = 132 if portrait else (116 if compact else 155)
 	_place(ui.bottom, Vector2(margin, area.y - bottom_height), Vector2(menu_width, 0))
 	play_button.custom_minimum_size = Vector2(0, 58)
-	ui.bottom.add_theme_constant_override("separation", 10 if compact else 15)
+	ui.bottom.add_theme_constant_override("separation", 8 if compact else 15)
+	ui.menu_hint.add_theme_font_size_override("font_size", 14 if compact and not portrait else 16)
 	ui.menu_hint.text = ("Удерживайте кнопки внизу экрана\nПрыжки — автоматически" if touch_controls else "A / D или стрелки — движение\nПрыжки — автоматически") if menu_page == "home" else "Выбор сохранён для следующего прыжка"
 	ui.pickers.visible = menu_page == "home"
 	ui.options.visible = menu_page != "home"
-	var options_y: float = area.y - bottom_height - 150 if portrait else 160.0
+	var options_y: float = area.y - bottom_height - 150 if portrait else 166.0
 	_place(ui.options, Vector2(margin, options_y), Vector2(menu_width, 132 if portrait else maxf(100, area.y - bottom_height - options_y - 18)))
 	_place(score_label, Vector2(margin, 20), Vector2(180, 48))
 	score_label.add_theme_font_size_override("font_size", 34 if compact else 42)
@@ -468,6 +526,7 @@ func _open_menu_page(page: String) -> void:
 				_update_choice_labels())
 			button.toggle_mode = true
 			button.custom_minimum_size.y = 54
+			button.add_theme_font_size_override("font_size", 18)
 			button.set_meta("choice", id)
 			ui.option_list.add_child(button)
 	_update_choice_labels()
@@ -493,6 +552,10 @@ func start_game() -> void:
 	before_last_generated = Vector3.INF
 	last_was_stone = false
 	last_was_moving = false
+	next_coin_index = rng.randi_range(5, 8)
+	run_coins = 0
+	run_seconds = 0.0
+	current_pace = 1.0
 	highest = 0
 	landings = 0
 	last_landing_y = 0.0
@@ -501,7 +564,7 @@ func start_game() -> void:
 	select_character(selected)
 	velocity = Vector2(0, Rules.JUMP_SPEED)
 	_add_platform(Vector3.ZERO, 0)
-	while last_generated.y < 18:
+	while last_generated.y < camera_height + Rules.SPAWN_AHEAD:
 		_generate_platform()
 	menu.hide()
 	overlay.hide()
@@ -510,21 +573,25 @@ func start_game() -> void:
 	_update_camera(1.0)
 	score_label.text = "0 м"
 	record_label.text = "Рекорд: %d м" % session_best
+	_resize_ui()
 
 func _physics_process(delta: float) -> void:
 	if mode != "playing":
 		return
+	run_seconds += delta
+	current_pace = Rules.pace(highest, run_seconds)
+	var step: float = delta * current_pace
 	for i in range(platform_nodes.size()):
-		platform_nodes[i].advance_motion(delta)
+		platform_nodes[i].advance_motion(step)
 		platforms[i] = platform_nodes[i].position
 	var direction: float = Input.get_axis("move_left", "move_right")
 	if touch_left or touch_right:
 		direction = float(touch_right) - float(touch_left)
-	velocity.x = move_toward(velocity.x, direction * Rules.MOVE_SPEED, Rules.ACCELERATION * delta)
+	velocity.x = move_toward(velocity.x, direction * Rules.MOVE_SPEED, Rules.ACCELERATION * step)
 	var previous_y: float = player.position.y
-	velocity.y -= Rules.GRAVITY * delta
-	player.position.x = Rules.wrap_x(player.position.x + velocity.x * delta, _wrap_half_width())
-	player.position.y += velocity.y * delta
+	velocity.y -= Rules.GRAVITY * step
+	player.position.x = Rules.wrap_x(player.position.x + velocity.x * step, _wrap_half_width())
+	player.position.y += velocity.y * step
 	for i in range(platforms.size()):
 		if Rules.lands(previous_y, player.position.y, velocity.y, player.position.x, platforms[i] + Vector3(0, 0.42 if platform_nodes[i].kind == "spikes" else 0.0, 0)):
 			if platform_nodes[i].kind == "spikes":
@@ -542,21 +609,24 @@ func _physics_process(delta: float) -> void:
 				broken.break_apart()
 				broken_platforms.append(broken)
 			break
+	_collect_coins()
 	highest = maxf(highest, player.position.y)
 	camera_height = maxf(camera_height, highest + 1.0)
 	score_label.text = "%d м" % int(highest * 10.0)
-	while last_generated.y < camera_height + 12.0:
+	while last_generated.y < camera_height + Rules.SPAWN_AHEAD:
 		_generate_platform()
 	while platforms.size() > 0 and platforms[0].y < camera_height - 10:
 		platforms.pop_front()
 		platform_nodes.pop_front().queue_free()
-	if player.position.y < camera_height - 7.0:
+	if player.position.y < _fall_height():
 		finish_game()
 
 func _process(delta: float) -> void:
 	if mode == "menu" and visual != null:
 		visual.rotation.y = sin(Time.get_ticks_msec() * 0.00045) * 0.22
 	if mode == "playing" and visual != null:
+		for coin in coin_nodes:
+			if is_instance_valid(coin): coin.rotation.y += delta * current_pace * 2.0
 		visual.rotation.z = lerpf(visual.rotation.z, -velocity.x * 0.035, delta * 10.0)
 		bounce_flash = maxf(0, bounce_flash - delta * 5)
 		player.scale = Vector3(1.0 + bounce_flash * 0.08, 1.0 - bounce_flash * 0.1, 1.0 + bounce_flash * 0.08)
@@ -580,14 +650,22 @@ func _update_camera(delta: float) -> void:
 	var target_y: float = 1.5 if mode == "menu" else camera_height
 	if mode == "menu" and portrait and not ui.is_empty():
 		var area := Vector2(get_window().content_scale_size)
-		var model_center: float = (270.0 + ui.bottom.position.y) * 0.5 if menu_page == "home" else (140.0 + ui.options.position.y) * 0.5
+		var model_center: float = (287.0 + ui.bottom.position.y) * 0.5 if menu_page == "home" else (158.0 + ui.options.position.y) * 0.5
 		target_y = 1.65 + (model_center - area.y * 0.5) * 7.2 / area.x
 	var target_x: float = (1.5 if portrait else -0.7) if mode == "menu" else 0.0
 	var desired := Vector3(target_x, target_y + 4.0, 13)
 	camera.position = camera.position.lerp(desired, minf(delta * 7.0, 1.0))
 	camera.look_at(Vector3(target_x, camera.position.y - 4.0, 0), Vector3.UP)
 	camera.keep_aspect = Camera3D.KEEP_WIDTH if portrait else Camera3D.KEEP_HEIGHT
-	camera.size = (7.2 if portrait else 8.7) if mode == "menu" else (10.6 if portrait else 10.0)
+	camera.size = (7.2 if portrait else 8.7) if mode == "menu" else (8.8 if portrait else 10.0)
+	if not ui.is_empty():
+		var area := get_viewport().get_visible_rect().size
+		var edge_y: float = camera.unproject_position(Vector3(0, _fall_height(), 0)).y
+		ui.fall_boundary.visible = portrait and mode != "menu" and edge_y > 0 and edge_y < area.y
+		_place(ui.fall_boundary, Vector2(0, clampf(edge_y, 0, area.y)), Vector2(area.x, maxf(0, area.y - edge_y)))
+
+func _fall_height() -> float:
+	return camera_height - 7.0
 
 func _wrap_half_width() -> float:
 	var area := get_viewport().get_visible_rect().size
@@ -616,7 +694,7 @@ func finish_game() -> void:
 	mode = "gameover"
 	session_best = maxi(session_best, int(highest * 10))
 	overlay_title.text = "Ещё один прыжок?"
-	overlay_text.text = "Высота: %d м\nРекорд: %d м" % [int(highest * 10), session_best]
+	overlay_text.text = "Высота: %d м\nРекорд: %d м\nСобрано монет: %d" % [int(highest * 10), session_best, run_coins]
 	resume_button.hide()
 	overlay.show()
 
@@ -652,7 +730,7 @@ func _notification(what: int) -> void:
 func _run_mechanics_tests() -> void:
 	_open_menu_page("characters")
 	assert(ui.option_list.get_child_count() == Catalog.CHARACTERS.size())
-	select_character("sveta")
+	select_character(Catalog.CHARACTERS[1].id)
 	_open_menu_page("maps")
 	select_map("sunset")
 	assert(selected_map == "sunset" and sky_material.sky_top_color == Catalog.MAPS[1].top)
@@ -734,8 +812,62 @@ func _run_mechanics_tests() -> void:
 	show_menu()
 	print("SKYJUMP_MECHANICS_OK boost moving pause wrap_left wrap_right multitouch cancel spikes catalogs")
 
+func _run_currency_tests() -> void:
+	for entry in Catalog.CHARACTERS:
+		select_character(entry.id)
+		assert(visual != null, "Character failed to load: " + entry.id)
+		await get_tree().process_frame
+		await RenderingServer.frame_post_draw
+		if not OS.has_feature("web"):
+			get_viewport().get_texture().get_image().save_png("res://../qa/character-" + entry.id + ".png")
+		if entry.id == "kirby":
+			var animation_players: Array[Node] = visual.find_children("*", "AnimationPlayer", true, false)
+			assert(not animation_players.is_empty(), "Kirby blink animation missing")
+			var animation_player: AnimationPlayer = animation_players[0]
+			assert(animation_player.is_playing())
+			var face: MeshInstance3D
+			for mesh in visual.find_children("*", "MeshInstance3D", true, false):
+				if mesh.get_blend_shape_count() > 0: face = mesh
+			assert(face != null, "Kirby blink shape missing")
+			animation_player.seek(1.85, true)
+			assert(face.get_blend_shape_value(0) > 0.9, "Kirby did not close his eyes")
+			await RenderingServer.frame_post_draw
+			if not OS.has_feature("web"):
+				get_viewport().get_texture().get_image().save_png("res://../qa/kirby-blink-closed.png")
+			animation_player.seek(0.0, true)
+			assert(face.get_blend_shape_value(0) < 0.05, "Kirby did not reopen his eyes")
+	_open_menu_page("characters")
+	assert(ui.wallet_badge.is_visible_in_tree())
+	assert(not ui.wallet_badge.get_global_rect().intersects(ui.options.get_global_rect()), "Character list covers wallet")
+	_open_menu_page("home")
+	print("SKYJUMP_MODEL_UI_OK blink wallet_visible catalog=", Catalog.CHARACTERS.size())
+	assert(characters.cache.size() == Catalog.CHARACTERS.size())
+	start_game()
+	assert(coin_nodes.size() <= generated_count / 5 + 1)
+	_clear_platforms()
+	_add_platform(Vector3.ZERO, 0)
+	_spawn_coin(platform_nodes[0])
+	var previous_balance: int = wallet.balance
+	player.position = Vector3.ZERO
+	_collect_coins()
+	_collect_coins()
+	assert(run_coins == 1 and wallet.balance == previous_balance + 1, "Coin was missed or counted twice")
+	var restored := Wallet.new(wallet.path)
+	assert(restored.balance == wallet.balance, "Wallet did not persist")
+	start_game()
+	assert(wallet.balance == previous_balance + 1 and run_coins == 0, "Restart reset the wallet")
+	var malformed := ConfigFile.new()
+	malformed.set_value("wallet", "coins", -100)
+	assert(malformed.save("user://qa-invalid-wallet.cfg") == OK)
+	var safe_wallet := Wallet.new("user://qa-invalid-wallet.cfg")
+	assert(safe_wallet.balance == 0)
+	DirAccess.remove_absolute("user://qa-invalid-wallet.cfg")
+	show_menu()
+	print("SKYJUMP_CURRENCY_OK characters=", Catalog.CHARACTERS.size(), " one_pickup save_reload restart invalid_save")
+
 func _run_self_test() -> void:
 	await _run_mechanics_tests()
+	await _run_currency_tests()
 	var test_rng := RandomNumberGenerator.new()
 	test_rng.seed = 123
 	var pos := Vector3.ZERO
@@ -752,13 +884,14 @@ func _run_self_test() -> void:
 	# Bounce on one isolated stone twice using real physics, then verify removal.
 	start_game()
 	_clear_platforms()
+	last_generated.y = 1000.0
 	_add_platform(Vector3.ZERO, 0, true)
 	var stone = platform_nodes[0]
 	for frame in range(80):
 		await get_tree().physics_frame
 		if stone.hits == 1:
 			break
-	assert(stone.hits == 1 and platforms.size() == 1)
+	assert(stone.hits == 1 and platforms.size() == 1, "Stone setup hits=%d platforms=%d mode=%s player=%s velocity=%s" % [stone.hits, platforms.size(), mode, player.position, velocity])
 	pause_game()
 	var stone_hits: int = stone.hits
 	await get_tree().physics_frame
@@ -774,14 +907,14 @@ func _run_self_test() -> void:
 	assert(broken_platforms.is_empty())
 	print("STONE_PHYSICS_OK first=cracked second=removed bounce=preserved reset=clean")
 	assert(visual != null)
-	select_character("sveta")
+	select_character(Catalog.CHARACTERS[1].id)
 	assert(visual != null)
 	await get_tree().process_frame
 	await RenderingServer.frame_post_draw
 	if not OS.has_feature("web"):
-		get_viewport().get_texture().get_image().save_png("res://../qa/game-menu-sveta.png")
-	select_character("emil")
-	assert(visual != null and characters.cache.size() == 2)
+		get_viewport().get_texture().get_image().save_png("res://../qa/game-menu-alternate.png")
+	select_character(Catalog.CHARACTERS[0].id)
+	assert(visual != null and characters.cache.size() == Catalog.CHARACTERS.size())
 	await get_tree().process_frame
 	await RenderingServer.frame_post_draw
 	if not OS.has_feature("web"):
@@ -791,10 +924,20 @@ func _run_self_test() -> void:
 	# A small deterministic pilot exercises actual physics, landings and scrolling.
 	for i in range(1800):
 		var target: Vector3 = platforms[0]
-		for p in platforms:
-			if p.y > last_landing_y + 0.1 and platform_nodes[platforms.find(p)].kind != "spikes":
+		# A spring skips several levels: aim for the highest reachable landing,
+		# rather than chasing the first platform far below the boosted apex.
+		for j in range(platforms.size()):
+			var p: Vector3 = platforms[j]
+			if platform_nodes[j].kind == "spikes" or p.y <= target.y:
+				continue
+			var discriminant: float = velocity.y * velocity.y - 2.0 * Rules.GRAVITY * (p.y - player.position.y)
+			if discriminant < 0: continue
+			var landing_time: float = (velocity.y + sqrt(discriminant)) / Rules.GRAVITY
+			if landing_time <= 0: continue
+			if platform_nodes[j].kind == "moving":
+				p.x = platform_nodes[j].origin_x + sin(platform_nodes[j].motion_time + landing_time * 1.55) * platform_nodes[j].motion_amplitude
+			if absf(p.x - player.position.x) <= Rules.MOVE_SPEED * maxf(0, landing_time - 0.08) + Rules.PLATFORM_RADIUS:
 				target = p
-				break
 		var difference: float = target.x - player.position.x - velocity.x * 0.12
 		Input.action_release("move_left")
 		Input.action_release("move_right")
@@ -806,11 +949,12 @@ func _run_self_test() -> void:
 			if not OS.has_feature("web"):
 				get_viewport().get_texture().get_image().save_png("res://../qa/game-playing.png")
 		if mode == "gameover":
+			print("PILOT_STOP frame=", i, " height=", highest, " landings=", landings, " player=", player.position, " target=", target, " last_landing=", last_landing_y)
 			break
 	Input.action_release("move_left")
 	Input.action_release("move_right")
 	assert(landings >= 20, "Pilot did not complete enough of the harder route")
-	assert(platforms.size() < 32, "Unbounded platform count")
+	assert(platforms.size() < 40, "Unbounded platform count")
 	print("MVP_PLAYTEST height=", highest, " landings=", landings, " platforms=", platforms.size())
 	print("MVP_PERFORMANCE fps=", Engine.get_frames_per_second(), " rendered_primitives=", Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME))
 	if mode == "playing":
@@ -827,6 +971,7 @@ func _run_self_test() -> void:
 	assert(highest == 0.0 and mode == "playing")
 	show_menu()
 	assert(mode == "menu")
+	print("QA_WALLET_SAVED=", wallet.balance)
 	print("MVP_SELF_TEST_OK")
 	if not OS.has_feature("web"):
 		get_tree().quit()

@@ -6,7 +6,9 @@ func _initialize() -> void:
 	var checked: int = 0
 	var lowest_gap: float = INF
 	var highest_gap: float = 0.0
-	for seed_number in range(200):
+	for seed_number in range(400):
+		var pace: float = 1.0 if seed_number < 200 else 1.4
+		var dt: float = pace / 60.0
 		var rng := RandomNumberGenerator.new()
 		rng.seed = seed_number
 		var before := Vector3.INF
@@ -35,11 +37,11 @@ func _initialize() -> void:
 			for frame in range(100):
 				var difference: float = next.x - x - vx * 0.12
 				var direction: float = signf(difference) if absf(difference) > 0.1 else 0.0
-				vx = move_toward(vx, direction * Rules.MOVE_SPEED, Rules.ACCELERATION / 60.0)
+				vx = move_toward(vx, direction * Rules.MOVE_SPEED, Rules.ACCELERATION * dt)
 				var previous_y: float = y
-				vy -= Rules.GRAVITY / 60.0
-				x = clampf(x + vx / 60.0, -Rules.HALF_WIDTH, Rules.HALF_WIDTH)
-				y += vy / 60.0
+				vy -= Rules.GRAVITY * dt
+				x = clampf(x + vx * dt, -Rules.HALF_WIDTH, Rules.HALF_WIDTH)
+				y += vy * dt
 				if Rules.lands(previous_y, y, vy, x, next):
 					landed = true
 					break
@@ -48,6 +50,8 @@ func _initialize() -> void:
 			before = previous
 			previous = next
 			checked += 1
+	if not _check(Rules.pace(0, 0) == 1.0 and Rules.pace(140, 0) > 1.0 and Rules.pace(0, 150) > 1.0 and is_equal_approx(Rules.pace(100000, 100000), 1.4), "Invalid pace ramp"):
+		return
 	var stone := Platform.new()
 	stone.configure(Color.WHITE, true)
 	if not _check(not stone.register_landing() and stone.hits == 1 and stone.active, "Stone broke before second landing"):
@@ -65,7 +69,7 @@ func _initialize() -> void:
 		if not _check(not normal.register_landing() and normal.active, "Normal platform broke"):
 			return
 	normal.free()
-	print("PLATFORM_TEST_OK routes=200 jumps=", checked, " gap_range=", lowest_gap, "..", highest_gap)
+	print("PLATFORM_TEST_OK routes=400 pace=1..1.4 jumps=", checked, " gap_range=", lowest_gap, "..", highest_gap)
 	quit(0)
 
 func _check(condition: bool, message: String) -> bool:

@@ -11,7 +11,6 @@ for(const id of ['emil','sveta']){
  const before=count();
  await doc.transform(dequantize(),weld(),simplify({simplifier:MeshoptSimplifier,ratio:.035,error:.012}),prune());
  await io.write(`game/assets/models/${id}-lite.glb`,doc);
- fs.copyFileSync(`game/assets/models/${id}-lite.glb`,`dist/models/${id}-chibi.glb`);
  stats.push({id,trianglesBefore:before,trianglesAfter:count(),bytes:fs.statSync(`game/assets/models/${id}-lite.glb`).size});
 }
 fs.writeFileSync('inspection/chibi/optimization.json',JSON.stringify(stats,null,2));console.log(stats);

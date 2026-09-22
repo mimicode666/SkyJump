@@ -33,7 +33,7 @@ func configure(color: Color, is_stone: bool = false, type_id: String = "normal")
 	disk.bottom_radius = Rules.PLATFORM_RADIUS * (0.84 if stone else 0.9)
 	disk.height = 0.38 if stone else 0.3
 	disk.radial_segments = 10 if stone else 32
-	_piece(disk, Vector3(0, -disk.height / 2, 0), base_color)
+	_piece(disk, Vector3(0, -disk.height / 2, 0), base_color, false)
 	if stone:
 		# Two small surface marks show the remaining landings.
 		for x in [-0.17, 0.17]:
@@ -54,7 +54,7 @@ func configure(color: Color, is_stone: bool = false, type_id: String = "normal")
 		ring.outer_radius = Rules.PLATFORM_RADIUS
 		ring.rings = 32
 		ring.ring_segments = 8
-		_piece(ring, Vector3(0, -0.04, 0), base_color.lightened(0.22))
+		_piece(ring, Vector3(0, -0.04, 0), base_color.lightened(0.22), false)
 	if kind == "spikes":
 		for x in [-0.62, 0.0, 0.62]:
 			for z in [-0.35, 0.32]:
@@ -86,9 +86,14 @@ func advance_motion(delta: float) -> void:
 		motion_time += delta * 1.55
 		position.x = origin_x + sin(motion_time) * motion_amplitude
 
-func _piece(mesh: Mesh, offset: Vector3, color: Color) -> MeshInstance3D:
+func _piece(mesh: Mesh, offset: Vector3, color: Color, fit_to_disk: bool = true) -> MeshInstance3D:
 	var part := MeshInstance3D.new()
 	part.mesh = mesh
+	# Decorations use the original disk's proportions; keep them within smaller rims.
+	if fit_to_disk:
+		var ratio: float = Rules.PLATFORM_RADIUS / 1.04
+		part.scale = Vector3(ratio, 1.0, ratio)
+		offset *= Vector3(ratio, 1.0, ratio)
 	part.position = offset
 	var mat := StandardMaterial3D.new()
 	mat.albedo_color = color

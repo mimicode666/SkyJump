@@ -1,17 +1,22 @@
 extends RefCounted
 ## A narrow 3D playfield keeps the first prototype easy to control.
-const GRAVITY: float = 24.0
-const JUMP_SPEED: float = 11.2
-const BOOST_SPEED: float = 16.2
-const MOVE_SPEED: float = 6.6
-const ACCELERATION: float = 42.0
+const GRAVITY: float = 30.0
+const JUMP_SPEED: float = 13.2
+const BOOST_SPEED: float = 22.0
+const MOVE_SPEED: float = 7.4
+const ACCELERATION: float = 58.0
 const HALF_WIDTH: float = 4.6
-const PLATFORM_RADIUS: float = 1.04
-const FOOT_RADIUS: float = 0.18
-const MIN_HEIGHT_STEP: float = 1.8
-const MAX_HEIGHT_STEP: float = 2.2
+const PLATFORM_RADIUS: float = 0.78
+const FOOT_RADIUS: float = 0.14
+const MIN_HEIGHT_STEP: float = 2.1
+const MAX_HEIGHT_STEP: float = 2.6
+const SPAWN_AHEAD: float = 24.0
 const MAX_STEP_X: float = 2.85
 const PLATFORM_EDGE: float = 3.55
+
+static func pace(height: float, seconds: float) -> float:
+	# Scale simulation time, so jumps become quicker without changing their height.
+	return 1.0 + 0.28 * clampf(height / 140.0, 0.0, 1.0) + 0.12 * clampf(seconds / 150.0, 0.0, 1.0)
 
 static func wrap_x(x: float, half_width: float) -> float:
 	return wrapf(x, -half_width, half_width)
@@ -42,5 +47,5 @@ static func next_platform(previous: Vector3, rng: RandomNumberGenerator, before_
 		var span: float = maxf(next_x, maxf(previous.x, before_previous.x)) - minf(next_x, minf(previous.x, before_previous.x))
 		if span <= 2.0 * (PLATFORM_RADIUS + FOOT_RADIUS) + 0.12:
 			next_x = high if next_x == low else low
-	var gap: float = rng.randf_range(lerpf(MIN_HEIGHT_STEP, 1.95, difficulty), lerpf(2.0, MAX_HEIGHT_STEP, difficulty))
+	var gap: float = rng.randf_range(lerpf(MIN_HEIGHT_STEP, 2.3, difficulty), lerpf(2.35, MAX_HEIGHT_STEP, difficulty))
 	return Vector3(next_x, previous.y + gap, 0.0)

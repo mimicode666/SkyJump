@@ -162,7 +162,10 @@ func _setup_world() -> void:
 func _add_platform(pos: Vector3, index: int, stone: bool = false, kind: String = "normal") -> void:
 	var node := JumpPlatform.new()
 	node.position = pos
-	node.configure(COLORS[index % COLORS.size()], stone, kind)
+	var menu_stand: bool = mode == "menu"
+	node.configure(Color("fff8ed") if menu_stand else COLORS[index % COLORS.size()], stone, kind)
+	if menu_stand:
+		node.scale = Vector3(2.0, 1.0, 2.0)
 	world.add_child(node)
 	platforms.append(pos)
 	platform_nodes.append(node)
@@ -317,20 +320,6 @@ func _setup_ui() -> void:
 	record_label = _label("", 16)
 	record_label.position = Vector2(40, 78)
 	hud.add_child(record_label)
-	var fall_boundary := ColorRect.new()
-	fall_boundary.color = Color(0.76, 0.34, 0.35, 0.11)
-	fall_boundary.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	hud.add_child(fall_boundary)
-	var fall_edge := ColorRect.new()
-	fall_edge.color = Color(0.76, 0.34, 0.35, 0.45)
-	fall_edge.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	fall_edge.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
-	fall_edge.offset_bottom = 2
-	fall_boundary.add_child(fall_edge)
-	var fall_caption := _label("Граница падения", 13)
-	fall_caption.position = Vector2(12, 5)
-	fall_caption.modulate = Color("955d69")
-	fall_boundary.add_child(fall_caption)
 	var pause_button := _button("Пауза", pause_game)
 	pause_button.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
 	pause_button.position = Vector2(-195, 28)
@@ -378,7 +367,7 @@ func _setup_ui() -> void:
 	ui = {"title": title, "heading": heading, "subtitle": subtitle, "pickers": pickers,
 		"bottom": menu_bottom, "menu_hint": menu_hint, "pause": pause_button,
 		"hint": hint, "column": column, "pads": touch_pads,
-		"wallet_badge": wallet_badge, "fall_boundary": fall_boundary, "character_choice": character_choice, "map_choice": map_choice, "options": options, "option_list": option_list}
+		"wallet_badge": wallet_badge, "character_choice": character_choice, "map_choice": map_choice, "options": options, "option_list": option_list}
 	hud.hide()
 	overlay.hide()
 	_open_menu_page("home")
@@ -658,11 +647,6 @@ func _update_camera(delta: float) -> void:
 	camera.look_at(Vector3(target_x, camera.position.y - 4.0, 0), Vector3.UP)
 	camera.keep_aspect = Camera3D.KEEP_WIDTH if portrait else Camera3D.KEEP_HEIGHT
 	camera.size = (7.2 if portrait else 8.7) if mode == "menu" else (8.8 if portrait else 10.0)
-	if not ui.is_empty():
-		var area := get_viewport().get_visible_rect().size
-		var edge_y: float = camera.unproject_position(Vector3(0, _fall_height(), 0)).y
-		ui.fall_boundary.visible = portrait and mode != "menu" and edge_y > 0 and edge_y < area.y
-		_place(ui.fall_boundary, Vector2(0, clampf(edge_y, 0, area.y)), Vector2(area.x, maxf(0, area.y - edge_y)))
 
 func _fall_height() -> float:
 	return camera_height - 7.0

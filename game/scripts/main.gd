@@ -10,6 +10,7 @@ const WalletBadge = preload("res://scripts/wallet_badge.gd")
 const Catalog = preload("res://scripts/catalog.gd")
 const TouchDirection = preload("res://scripts/touch_direction.gd")
 const HowToPlay = preload("res://scripts/how_to_play.gd")
+const NightSky = preload("res://scripts/night_sky.gd")
 const COLORS = [Color("65b333"), Color("efaa25"), Color("935aca")]
 var characters = Characters.new()
 var selected: String = Catalog.CHARACTERS[0].id
@@ -26,6 +27,7 @@ var visual: Node3D
 var camera: Camera3D
 var world: Node3D
 var clouds: Node3D
+var night_sky: Node3D
 var platform_nodes: Array[Node3D] = []
 var platforms: Array[Vector3] = []
 var velocity := Vector2.ZERO
@@ -74,11 +76,12 @@ var current_pace := 1.0
 
 func _ready() -> void:
 	Engine.max_fps = 60
-	automated = "--self-test" in OS.get_cmdline_user_args()
+	var camera_test: bool = "--camera-test" in OS.get_cmdline_user_args()
+	automated = "--self-test" in OS.get_cmdline_user_args() or camera_test
 	services.availability_changed.connect(_platform_available_changed)
 	services.suspension_changed.connect(_platform_suspension_changed)
 	services.initialize(automated)
-	wallet = Wallet.new("user://qa-run-wallet.cfg" if automated else "user://wallet.cfg")
+	wallet = Wallet.new("user://qa-camera-wallet.cfg" if camera_test else ("user://qa-run-wallet.cfg" if automated else "user://wallet.cfg"))
 	wallet.clock = func(): return services.now_seconds()
 	session_best = wallet.best_score()
 	_rng_setup()
@@ -95,7 +98,7 @@ func _ready() -> void:
 			assert(services.bridge != null and services.status == "local", "Web platform bridge did not initialize")
 			print("SKYJUMP_PLATFORM_BRIDGE_OK local_no_sdk_requests")
 		print("QA_WALLET_LOADED=", wallet.balance)
-		call_deferred("_run_self_test")
+		call_deferred("_run_camera_test" if camera_test else "_run_self_test")
 
 func _rng_setup() -> void:
 	rng.randomize()
@@ -156,6 +159,9 @@ func _setup_world() -> void:
 	camera.size = 12.5
 	camera.current = true
 	add_child(camera)
+	night_sky = NightSky.new()
+	camera.add_child(night_sky)
+	night_sky.hide()
 	world = Node3D.new()
 	add_child(world)
 	clouds = Node3D.new()
@@ -701,7 +707,16 @@ func select_map(id: String) -> void:
 		sky_material.ground_horizon_color = entry.horizon
 		sky_material.ground_bottom_color = entry.bottom
 		cloud_material.albedo_color = entry.cloud
+		night_sky.visible = id == "moon"
+		clouds.visible = id != "moon"
+	_update_map_label_colors()
 	_update_choice_labels()
+
+func _update_map_label_colors() -> void:
+	var ink := Color("edf2ff") if selected_map == "moon" else Color("315470")
+	for label in [ui.title, ui.heading, ui.subtitle, model_label, ui.menu_hint, score_label, record_label, ui.hint]:
+		label.add_theme_color_override("font_color", ink)
+	ui.wallet_badge.value.add_theme_color_override("font_color", Color("315470") if overlay.visible else ink)
 
 func start_game() -> void:
 	if ad_pending or platform_suspended: return
@@ -832,16 +847,38 @@ func _update_camera(delta: float) -> void:
 	if mode == "menu":
 		for stand in platform_nodes: stand.scale = Vector3(2, 1, 2) * player.scale.x
 	var target_x: float = (1.5 if portrait else -0.7) if mode == "menu" else 0.0
-	var desired := Vector3(target_x, target_y + 4.0, 13)
-	camera.position = camera.position.lerp(desired, minf(delta * 7.0, 1.0))
-	camera.look_at(Vector3(target_x, camera.position.y - 4.0, 0), Vector3.UP)
 	camera.keep_aspect = Camera3D.KEEP_WIDTH if portrait else Camera3D.KEEP_HEIGHT
 	camera.size = (7.2 if portrait else 8.7) if mode == "menu" else (8.8 if portrait else 10.0)
+	if mode == "menu":
+		var desired := Vector3(target_x, target_y + 4.0, 13)
+		camera.position = camera.position.lerp(desired, minf(delta * 7.0, 1.0))
+		camera.look_at(Vector3(target_x, camera.position.y - 4.0, 0), Vector3.UP)
+	else:
+		_frame_game_camera(camera)
+	if night_sky.visible:
+		var area := get_viewport().get_visible_rect().size
+		var span := Vector2(camera.size, camera.size * area.y / maxf(area.x, 1.0)) if portrait else Vector2(camera.size * area.x / maxf(area.y, 1.0), camera.size)
+		night_sky.layout(span, 0.08 if mode == "menu" and portrait else 0.27)
 	if visual != null:
 		# Orthographic view: shifting only the artwork toward the camera preserves
 		# its screen position and scale, but keeps it in front of solid platforms.
 		# The logical player, landings, coins and source GLB materials stay unchanged.
 		visual.global_position = player.global_position + (camera.global_basis.z * 4.0 if mode != "menu" else Vector3.ZERO)
+
+func _frame_game_camera(view_camera: Camera3D) -> void:
+	var area := view_camera.get_viewport().get_visible_rect().size
+	var vertical_span: float = view_camera.size
+	if view_camera.keep_aspect == Camera3D.KEEP_WIDTH:
+		vertical_span *= area.y / maxf(area.x, 1.0)
+	# Account for the camera's tilt on the gameplay plane (z = 0).
+	# Two world units let the entire 1.6-unit hero leave the frame before death.
+	# Keep zoom and horizontal bounds intact; tall screens extend upward only.
+	var view_up_y: float = 13.0 / Vector2(4.0, 13.0).length()
+	var center_y: float = _fall_height() + 2.0 + vertical_span * 0.5 / view_up_y
+	view_camera.position = Vector3(0, center_y + 4.0, 13)
+	view_camera.look_at(Vector3(0, center_y, 0), Vector3.UP)
+	# camera_height already follows the continuous ascent. An extra Y lerp here
+	# would expose the death threshold again while the camera catches up.
 
 func _fall_height() -> float:
 	return camera_height - 7.0
@@ -860,6 +897,7 @@ func _sync_platform_state() -> void:
 	services.set_gameplay(mode == "playing" and not platform_suspended and not ad_pending)
 	AudioServer.set_bus_mute(0, platform_suspended or ad_pending or mode == "paused")
 	if ui.is_empty(): return
+	_update_map_label_colors()
 	ui.ad_cover.visible = ad_pending or platform_suspended
 	ui.ad_label.text = "Просмотр рекламы…" if ad_pending else "Пауза\nВернитесь в игру"
 	ui.wallet_badge.visible = mode != "tutorial"
@@ -1342,8 +1380,15 @@ func _run_map_shop_tests() -> void:
 	Wallet.clear_profile(PATH)
 	print("SKYJUMP_MAP_SHOP_OK previews insufficient_funds purchase no_double_charge persistence selection")
 
+func _run_camera_test() -> void:
+	var checks = load("res://tests/camera_framing_checks.gd")
+	checks.run(self)
+	await checks.integration(self)
+	if not OS.has_feature("web"): get_tree().quit()
+
 func _run_self_test() -> void:
 	load("res://tests/progression_checks.gd").run()
+	load("res://tests/camera_framing_checks.gd").run(self)
 	await _run_platform_tests()
 	await _run_reward_tests()
 	await _run_map_shop_tests()

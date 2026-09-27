@@ -1,6 +1,7 @@
 extends Node3D
 ## A platform owns its durability and appearance; the level owns collision order.
 const Rules = preload("res://scripts/jump_rules.gd")
+const Journey = preload("res://scripts/journey.gd")
 var stone: bool = false
 var kind: String = "normal"
 var origin_x: float = 0.0
@@ -14,8 +15,15 @@ var marks: Array[MeshInstance3D] = []
 var break_elapsed: float = -1.0
 var break_origin: Vector3
 var break_rotation: float = 0.0
+var artwork := Node3D.new()
+var landing_elapsed := -1.0
+var pulse: MeshInstance3D
+var springs: Array[MeshInstance3D] = []
+var crumbs: Array[MeshInstance3D] = []
+var surface_color: Color
 
 func configure(color: Color, is_stone: bool = false, type_id: String = "normal") -> void:
+	add_child(artwork)
 	stone = is_stone
 	kind = "stone" if stone else type_id
 	origin_x = position.x
@@ -28,6 +36,7 @@ func configure(color: Color, is_stone: bool = false, type_id: String = "normal")
 		base_color = Color("ff7bb8")
 	elif kind == "spikes":
 		base_color = Color("dc5356")
+	surface_color = base_color
 	var disk := CylinderMesh.new()
 	disk.top_radius = Rules.PLATFORM_RADIUS
 	disk.bottom_radius = Rules.PLATFORM_RADIUS * (0.84 if stone else 0.9)
@@ -72,7 +81,9 @@ func configure(color: Color, is_stone: bool = false, type_id: String = "normal")
 			spring.outer_radius = 0.33
 			spring.rings = 16
 			spring.ring_segments = 6
-			_piece(spring, Vector3(0, 0.05 + i * 0.09, 0), Color("fff1a8"))
+			var coil := _piece(spring, Vector3(0, 0.05 + i * 0.09, 0), Color("fff1a8"))
+			coil.set_meta("rest_y", coil.position.y)
+			springs.append(coil)
 	elif kind == "moving":
 		for sign_x in [-1, 1]:
 			for sign_z in [-1, 1]:
@@ -80,6 +91,70 @@ func configure(color: Color, is_stone: bool = false, type_id: String = "normal")
 				stripe.size = Vector3(0.36, 0.025, 0.085)
 				var part := _piece(stripe, Vector3(sign_x * 0.36, 0.025, sign_z * 0.12), Color("edffff"))
 				part.rotation.y = sign_x * sign_z * 0.65
+	_setup_landing_effect()
+
+func apply_environment(height: float) -> void:
+	var theme := Journey.sample(height)
+	var disk: StandardMaterial3D = parts[0].material_override
+	disk.albedo_texture = Journey.platform_texture(5 if stone else theme.index)
+	disk.roughness = 0.55 if theme.index == 1 and not stone else 0.85
+	if kind == "normal":
+		disk.albedo_color = theme.surface
+		parts[1].material_override.albedo_color = theme.surface.lightened(0.24)
+		parts[1].material_override.emission_enabled = theme.index >= 4
+		parts[1].material_override.emission = theme.surface * 0.18
+
+func _setup_landing_effect() -> void:
+	if kind == "spikes": return
+	if stone:
+		for i in range(4):
+			var chip := BoxMesh.new()
+			chip.size = Vector3.ONE * 0.07
+			var crumb := _piece(chip, Vector3.ZERO, Color("b8c4cf"), false)
+			crumb.hide()
+			crumbs.append(crumb)
+		return
+	pulse = MeshInstance3D.new()
+	var ring := TorusMesh.new()
+	ring.inner_radius = Rules.PLATFORM_RADIUS - 0.035
+	ring.outer_radius = Rules.PLATFORM_RADIUS + 0.005
+	ring.rings = 32
+	ring.ring_segments = 6
+	pulse.mesh = ring
+	pulse.position.y = 0.045
+	var glow := StandardMaterial3D.new()
+	glow.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	glow.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	glow.albedo_color = Color("fff6d6")
+	pulse.material_override = glow
+	pulse.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	artwork.add_child(pulse)
+	pulse.hide()
+
+func advance_feedback(delta: float) -> void:
+	if landing_elapsed < 0 or not active: return
+	landing_elapsed += delta
+	var t: float = clampf(landing_elapsed / (0.34 if kind == "boost" else 0.26), 0, 1)
+	if stone:
+		artwork.position.x = sin(t * 45.0) * (1 - t) * 0.025
+		for i in range(crumbs.size()):
+			var angle: float = i * TAU / crumbs.size()
+			crumbs[i].position = Vector3(cos(angle) * (0.2 + t * 0.55), sin(t * PI) * 0.25 - t * 0.12, sin(angle) * (0.2 + t * 0.55))
+			crumbs[i].scale = Vector3.ONE * (1 - t * 0.9)
+	else:
+		var compression: float = sin(t * PI * 2.0) * exp(-t * 3.0)
+		artwork.scale = Vector3(1 + compression * 0.12, 1 - compression * 0.24, 1 + compression * 0.12)
+		pulse.scale = Vector3.ONE * (1 + t * 0.28)
+		pulse.material_override.albedo_color.a = sin(t * PI) * (1 - t) * 0.75
+		for i in range(springs.size()):
+			springs[i].position.y = springs[i].get_meta("rest_y") + sin(t * PI) * (i + 1) * 0.12
+	if t >= 1:
+		landing_elapsed = -1
+		artwork.scale = Vector3.ONE
+		artwork.position = Vector3.ZERO
+		if pulse != null: pulse.hide()
+		for crumb in crumbs: crumb.hide()
+		for coil in springs: coil.position.y = coil.get_meta("rest_y")
 
 func advance_motion(delta: float) -> void:
 	if kind == "moving" and active:
@@ -99,7 +174,7 @@ func _piece(mesh: Mesh, offset: Vector3, color: Color, fit_to_disk: bool = true)
 	mat.albedo_color = color
 	mat.roughness = 1.0 if stone else 0.85
 	part.material_override = mat
-	add_child(part)
+	artwork.add_child(part)
 	parts.append(part)
 	return part
 
@@ -113,8 +188,11 @@ func _crack(a: Vector2, b: Vector2) -> void:
 	cracks.append(part)
 
 func register_landing() -> bool:
-	if not active or not stone:
-		return false
+	if not active: return false
+	landing_elapsed = 0.0
+	if pulse != null: pulse.show()
+	for crumb in crumbs: crumb.show()
+	if not stone: return false
 	hits += 1
 	marks[mini(hits - 1, 1)].hide()
 	if hits == 1:
@@ -125,6 +203,9 @@ func register_landing() -> bool:
 	return true
 
 func break_apart() -> void:
+	landing_elapsed = -1
+	artwork.scale = Vector3.ONE
+	artwork.position = Vector3.ZERO
 	break_origin = position
 	break_elapsed = 0.0
 	# The original low-poly disk becomes a few cheap fragments, with no rigid bodies.

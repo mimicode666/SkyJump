@@ -50,6 +50,7 @@ func _disk(parent: Node3D, at: Vector3, dimensions: Vector3, color: Color) -> vo
 	sphere.rings = 12
 	disk.mesh = sphere
 	disk.material_override = _material(color)
+	disk.material_override.render_priority = 1 if at.z > 0 else 0
 	disk.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	disk.position = at
 	disk.scale = dimensions
@@ -65,3 +66,11 @@ func layout(span: Vector2, moon_y: float) -> void:
 		stars.multimesh.set_instance_transform(i, Transform3D(basis, Vector3(points[i].x * span.x, points[i].y * span.y, -0.1)))
 	moon.position = Vector3(span.x * 0.3, span.y * moon_y, 0)
 	moon.scale = Vector3.ONE * minf(span.x, span.y) * 0.085
+
+func set_weights(star_weight: float, moon_weight: float) -> void:
+	stars.material_override.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	stars.material_override.albedo_color.a = star_weight
+	moon.visible = moon_weight > 0.001
+	for disk in moon.get_children():
+		disk.material_override.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		disk.material_override.albedo_color.a = moon_weight

@@ -10,7 +10,8 @@ const WalletBadge = preload("res://scripts/wallet_badge.gd")
 const Catalog = preload("res://scripts/catalog.gd")
 const TouchDirection = preload("res://scripts/touch_direction.gd")
 const HowToPlay = preload("res://scripts/how_to_play.gd")
-const NightSky = preload("res://scripts/night_sky.gd")
+const Journey = preload("res://scripts/journey.gd")
+const BounceSound = preload("res://scripts/bounce_sound.gd")
 const COLORS = [Color("65b333"), Color("efaa25"), Color("935aca")]
 var characters = Characters.new()
 var selected: String = Catalog.CHARACTERS[0].id
@@ -27,7 +28,8 @@ var visual: Node3D
 var camera: Camera3D
 var world: Node3D
 var clouds: Node3D
-var night_sky: Node3D
+var journey: Node3D
+var bounce_sound: AudioStreamPlayer
 var platform_nodes: Array[Node3D] = []
 var platforms: Array[Vector3] = []
 var velocity := Vector2.ZERO
@@ -46,7 +48,6 @@ var model_label: Label
 var play_button: Button
 var touch_left: bool = false
 var touch_right: bool = false
-var bounce_flash: float = 0.0
 var session_best: int = 0
 var landings: int = 0
 var last_landing_y: float = 0.0
@@ -63,7 +64,6 @@ var touch_controls := false
 var tutorial_seen := false
 var layout_pending := false
 var menu_page := "home"
-var selected_map := "clouds"
 var sky_material: ProceduralSkyMaterial
 var cloud_material: StandardMaterial3D
 var last_was_moving := false
@@ -73,22 +73,24 @@ var next_coin_index := 6
 var run_coins := 0
 var run_seconds := 0.0
 var current_pace := 1.0
+var environment_ink := Color.TRANSPARENT
+var wallet_ink := Color.TRANSPARENT
 
 func _ready() -> void:
 	Engine.max_fps = 60
 	var camera_test: bool = "--camera-test" in OS.get_cmdline_user_args()
-	automated = "--self-test" in OS.get_cmdline_user_args() or camera_test
+	var journey_test: bool = "--journey-test" in OS.get_cmdline_user_args()
+	automated = "--self-test" in OS.get_cmdline_user_args() or camera_test or journey_test
 	services.availability_changed.connect(_platform_available_changed)
 	services.suspension_changed.connect(_platform_suspension_changed)
 	services.initialize(automated)
-	wallet = Wallet.new("user://qa-camera-wallet.cfg" if camera_test else ("user://qa-run-wallet.cfg" if automated else "user://wallet.cfg"))
+	wallet = Wallet.new("user://qa-journey-wallet.cfg" if journey_test else ("user://qa-camera-wallet.cfg" if camera_test else ("user://qa-run-wallet.cfg" if automated else "user://wallet.cfg")))
 	wallet.clock = func(): return services.now_seconds()
 	session_best = wallet.best_score()
 	_rng_setup()
 	_setup_world()
 	_setup_ui()
 	select_character(selected)
-	select_map(wallet.active_map)
 	get_window().size_changed.connect(_queue_layout)
 	_resize_ui()
 	await RenderingServer.frame_post_draw
@@ -98,7 +100,7 @@ func _ready() -> void:
 			assert(services.bridge != null and services.status == "local", "Web platform bridge did not initialize")
 			print("SKYJUMP_PLATFORM_BRIDGE_OK local_no_sdk_requests")
 		print("QA_WALLET_LOADED=", wallet.balance)
-		call_deferred("_run_camera_test" if camera_test else "_run_self_test")
+		call_deferred("_run_journey_test" if journey_test else ("_run_camera_test" if camera_test else "_run_self_test"))
 
 func _rng_setup() -> void:
 	rng.randomize()
@@ -159,14 +161,16 @@ func _setup_world() -> void:
 	camera.size = 12.5
 	camera.current = true
 	add_child(camera)
-	night_sky = NightSky.new()
-	camera.add_child(night_sky)
-	night_sky.hide()
+	journey = Journey.new()
+	camera.add_child(journey)
+	bounce_sound = BounceSound.new()
+	add_child(bounce_sound)
 	world = Node3D.new()
 	add_child(world)
 	clouds = Node3D.new()
 	add_child(clouds)
 	cloud_material = material(Color("f5fcff"), true)
+	cloud_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	for i in range(10):
 		var cloud := Node3D.new()
 		cloud.position = Vector3((-1.0 if i % 2 == 0 else 1.0) * rng.randf_range(6.0, 9.0), i * 2.4 - 5.0, -5.0 - rng.randf_range(0, 5))
@@ -194,6 +198,7 @@ func _add_platform(pos: Vector3, index: int, stone: bool = false, kind: String =
 	if menu_stand:
 		node.scale = Vector3(2.0, 1.0, 2.0)
 	world.add_child(node)
+	if mode != "menu": node.apply_environment(pos.y)
 	platforms.append(pos)
 	platform_nodes.append(node)
 
@@ -320,9 +325,9 @@ func _setup_ui() -> void:
 	pickers.add_theme_constant_override("separation", 12)
 	menu.add_child(pickers)
 	var character_choice := _button("", func(): _open_menu_page("characters"))
-	var map_choice := _button("", func(): _open_menu_page("maps"))
+	var sound_choice := _button("", _toggle_sound)
 	pickers.add_child(character_choice)
-	pickers.add_child(map_choice)
+	pickers.add_child(sound_choice)
 	var options := ScrollContainer.new()
 	options.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	menu.add_child(options)
@@ -430,7 +435,7 @@ func _setup_ui() -> void:
 		"bottom": menu_bottom, "menu_hint": menu_hint, "pause": pause_button,
 		"actions": actions, "bonus": bonus_button, "continue": continue_button,
 		"hint": hint, "column": column, "pads": touch_pads,
-		"wallet_badge": wallet_badge, "character_choice": character_choice, "map_choice": map_choice, "options": options, "option_list": option_list}
+		"wallet_badge": wallet_badge, "character_choice": character_choice, "sound_choice": sound_choice, "options": options, "option_list": option_list}
 	hud.hide()
 	overlay.hide()
 	_open_menu_page("home")
@@ -475,7 +480,7 @@ func _resize_ui() -> void:
 	_place(ui.heading, Vector2(margin, 44 if short_landscape else 53), Vector2(menu_width, 52))
 	ui.heading.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER if menu_page == "records" else HORIZONTAL_ALIGNMENT_LEFT
 	if menu_page == "records": ui.heading.size.x = area.x - margin * 2
-	ui.subtitle.text = "Выберите героя и отправляйтесь в небо" if menu_page == "home" else ("Нажмите, чтобы выбрать героя" if menu_page == "characters" else "Нажмите, чтобы сменить фон")
+	ui.subtitle.text = "От земли до далёких галактик" if menu_page == "home" else "Нажмите, чтобы выбрать героя"
 	ui.subtitle.visible = menu_page != "records"
 	ui.subtitle.add_theme_font_size_override("font_size", 16 if compact else 20)
 	ui.subtitle.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -484,7 +489,7 @@ func _resize_ui() -> void:
 		ui.heading.position.y = ui.back.position.y + ui.back.size.y + 10
 		ui.subtitle.position.y = ui.heading.position.y + 48
 	_place(ui.pickers, Vector2(margin, 148 if short_landscape else (159 if compact else 195)), Vector2(menu_width, 120))
-	for button in [ui.character_choice, ui.map_choice]:
+	for button in [ui.character_choice, ui.sound_choice]:
 		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		button.custom_minimum_size = Vector2(0, 54)
 	_place(model_label, Vector2(margin, 272 if compact else 330), Vector2(menu_width, 46))
@@ -504,7 +509,7 @@ func _resize_ui() -> void:
 	var content_top: float = ui.subtitle.position.y + 46
 	var options_y: float = content_top
 	if menu_page == "records": options_y = ui.heading.position.y + ui.heading.size.y + 18
-	if portrait and menu_page in ["characters", "maps"]:
+	if portrait and menu_page == "characters":
 		options_y += clampf((area.y - 500) * 0.3 + 100, 120, 200)
 	var list_width: float = minf(640, area.x - margin * 2) if menu_page == "records" else menu_width
 	_place(ui.options, Vector2(margin, options_y), Vector2(list_width, maxf(80, ui.bottom.position.y - options_y - 16)))
@@ -580,22 +585,20 @@ func _update_choice_labels() -> void:
 	for entry in Catalog.CHARACTERS:
 		if entry.id == selected:
 			ui.character_choice.text = "Персонаж: " + entry.name
-	for entry in Catalog.MAPS:
-		if entry.id == selected_map:
-			ui.map_choice.text = "Карта: " + entry.name
+	ui.sound_choice.text = "Звук: вкл." if wallet.sound_enabled else "Звук: выкл."
 	for button in ui.option_list.get_children():
 		if not button is Button: continue
-		button.set_pressed_no_signal(button.get_meta("choice") == (selected if menu_page == "characters" else selected_map))
-		if menu_page in ["characters", "maps"]:
-			var entry := Catalog.character(button.get_meta("choice")) if menu_page == "characters" else Catalog.map_entry(button.get_meta("choice"))
-			var owned: bool = wallet.owns_character(entry.id) if menu_page == "characters" else wallet.owns_map(entry.id)
+		button.set_pressed_no_signal(button.get_meta("choice") == selected)
+		if menu_page == "characters":
+			var entry := Catalog.character(button.get_meta("choice"))
+			var owned: bool = wallet.owns_character(entry.id)
 			var status: String = " · доступен" if entry.price == 0 else (" · куплен" if owned else "")
 			button.text = "%s\n%d монет%s" % [entry.name, entry.price, status]
 	play_button.disabled = false
 	play_button.text = "Прыгать!" if menu_page == "home" else "В меню"
-	if menu_page in ["characters", "maps"]:
-		var entry := Catalog.character(selected) if menu_page == "characters" else Catalog.map_entry(selected_map)
-		var owned: bool = wallet.owns_character(selected) if menu_page == "characters" else wallet.owns_map(selected_map)
+	if menu_page == "characters":
+		var entry := Catalog.character(selected)
+		var owned: bool = wallet.owns_character(selected)
 		if owned: play_button.text = "Выбрать"
 		else:
 			play_button.disabled = wallet.balance < entry.price
@@ -610,20 +613,20 @@ func _menu_action() -> void:
 		if wallet.purchase_character(selected): equipped = selected
 		_update_wallet_labels()
 		_update_choice_labels()
-	elif menu_page == "maps" and not wallet.owns_map(selected_map):
-		wallet.purchase_map(selected_map)
-		_update_wallet_labels()
-		_update_choice_labels()
 	else: _open_menu_page("home")
+
+func _toggle_sound() -> void:
+	wallet.toggle_sound()
+	_update_choice_labels()
+	_sync_platform_state()
 
 func _open_menu_page(page: String) -> void:
 	menu_page = page
 	if page == "home" and not wallet.owns_character(selected): select_character(equipped)
-	if page == "home" and not wallet.owns_map(selected_map): select_map(wallet.active_map)
 	player.visible = page != "records"
 	world.visible = page != "records"
-	ui.title.text = "ПРЫЖОК В ОБЛАКА" if page == "home" else "SkyJump"
-	ui.heading.text = "SkyJump" if page == "home" else ("Персонажи" if page == "characters" else "Карты")
+	ui.title.text = "ВЫШЕ ОБЛАКОВ" if page == "home" else "SkyJump"
+	ui.heading.text = "SkyJump" if page == "home" else "Персонажи"
 	if page == "records": ui.heading.text = "Рекорды"
 	play_button.text = "Прыгать!" if page == "home" else "Готово"
 	for child in ui.option_list.get_children():
@@ -631,12 +634,11 @@ func _open_menu_page(page: String) -> void:
 		child.queue_free()
 	if page == "records":
 		_build_record_card()
-	elif page in ["characters", "maps"]:
-		for entry in (Catalog.CHARACTERS if page == "characters" else Catalog.MAPS):
+	elif page == "characters":
+		for entry in Catalog.CHARACTERS:
 			var id: String = entry.id
 			var button := _button(entry.name, func():
-				if page == "characters": select_character(id)
-				else: select_map(id)
+				select_character(id)
 				_update_choice_labels())
 			button.toggle_mode = true
 			button.custom_minimum_size.y = 66
@@ -679,6 +681,7 @@ func _build_record_card() -> void:
 	row.add_child(distance)
 
 func _request_start() -> void:
+	bounce_sound.unlocked = true
 	if ad_pending or platform_suspended: return
 	if tutorial_seen:
 		start_game()
@@ -697,32 +700,22 @@ func _accept_tutorial() -> void:
 	tutorial_seen = true
 	start_game()
 
-func select_map(id: String) -> void:
-	for entry in Catalog.MAPS:
-		if entry.id != id: continue
-		selected_map = id
-		if wallet.owns_map(id): wallet.equip_map(id)
-		sky_material.sky_top_color = entry.top
-		sky_material.sky_horizon_color = entry.horizon
-		sky_material.ground_horizon_color = entry.horizon
-		sky_material.ground_bottom_color = entry.bottom
-		cloud_material.albedo_color = entry.cloud
-		night_sky.visible = id == "moon"
-		clouds.visible = id != "moon"
-	_update_map_label_colors()
-	_update_choice_labels()
-
-func _update_map_label_colors() -> void:
-	var ink := Color("edf2ff") if selected_map == "moon" else Color("315470")
-	for label in [ui.title, ui.heading, ui.subtitle, model_label, ui.menu_hint, score_label, record_label, ui.hint]:
-		label.add_theme_color_override("font_color", ink)
-	ui.wallet_badge.value.add_theme_color_override("font_color", Color("315470") if overlay.visible else ink)
+func _update_environment_label_colors() -> void:
+	if ui.is_empty(): return
+	var ink := Color("315470").lerp(Color("edf2ff"), journey.state.get("dark", 0.0))
+	if not ink.is_equal_approx(environment_ink):
+		environment_ink = ink
+		for label in [ui.title, ui.heading, ui.subtitle, model_label, ui.menu_hint, score_label, record_label, ui.hint]:
+			label.add_theme_color_override("font_color", ink)
+	var balance_ink := Color("315470") if overlay.visible else ink
+	if not balance_ink.is_equal_approx(wallet_ink):
+		wallet_ink = balance_ink
+		ui.wallet_badge.value.add_theme_color_override("font_color", balance_ink)
 
 func start_game() -> void:
 	if ad_pending or platform_suspended: return
 	ui.tutorial.hide()
 	if not wallet.owns_character(selected): selected = equipped
-	if not wallet.owns_map(selected_map): select_map(wallet.active_map)
 	player.show()
 	world.show()
 	revive_used = false
@@ -783,7 +776,7 @@ func _physics_process(delta: float) -> void:
 				return
 			player.position.y = platforms[i].y
 			velocity.y = Rules.BOOST_SPEED if platform_nodes[i].kind == "boost" else Rules.JUMP_SPEED
-			bounce_flash = 1.0
+			if wallet.sound_enabled: bounce_sound.bounce(platform_nodes[i].kind)
 			landings += 1
 			last_landing_y = platforms[i].y
 			if platform_nodes[i].register_landing():
@@ -817,8 +810,7 @@ func _process(delta: float) -> void:
 		for coin in coin_nodes:
 			if is_instance_valid(coin): coin.rotation.y += delta * current_pace * 2.0
 		visual.rotation.z = lerpf(visual.rotation.z, -velocity.x * 0.035, delta * 10.0)
-		bounce_flash = maxf(0, bounce_flash - delta * 5)
-		player.scale = Vector3(1.0 + bounce_flash * 0.08, 1.0 - bounce_flash * 0.1, 1.0 + bounce_flash * 0.08)
+		for platform in platform_nodes: platform.advance_feedback(delta)
 		for i in range(broken_platforms.size() - 1, -1, -1):
 			if not is_instance_valid(broken_platforms[i]):
 				broken_platforms.remove_at(i)
@@ -855,10 +847,17 @@ func _update_camera(delta: float) -> void:
 		camera.look_at(Vector3(target_x, camera.position.y - 4.0, 0), Vector3.UP)
 	else:
 		_frame_game_camera(camera)
-	if night_sky.visible:
-		var area := get_viewport().get_visible_rect().size
-		var span := Vector2(camera.size, camera.size * area.y / maxf(area.x, 1.0)) if portrait else Vector2(camera.size * area.x / maxf(area.y, 1.0), camera.size)
-		night_sky.layout(span, 0.08 if mode == "menu" and portrait else 0.27)
+	var area := get_viewport().get_visible_rect().size
+	var span := Vector2(camera.size, camera.size * area.y / maxf(area.x, 1.0)) if portrait else Vector2(camera.size * area.x / maxf(area.y, 1.0), camera.size)
+	journey.update_view(0.0 if mode in ["menu", "tutorial"] else highest, span, delta if mode == "playing" else 0.0)
+	sky_material.sky_top_color = journey.state.top
+	sky_material.sky_horizon_color = journey.state.horizon
+	sky_material.ground_horizon_color = journey.state.horizon
+	sky_material.ground_bottom_color = journey.state.horizon.darkened(0.12)
+	cloud_material.albedo_color = journey.state.cloud
+	cloud_material.albedo_color.a = journey.state.clouds
+	clouds.visible = journey.state.clouds > 0.001
+	_update_environment_label_colors()
 	if visual != null:
 		# Orthographic view: shifting only the artwork toward the camera preserves
 		# its screen position and scale, but keeps it in front of solid platforms.
@@ -895,9 +894,12 @@ func _platform_suspension_changed(suspended: bool) -> void:
 
 func _sync_platform_state() -> void:
 	services.set_gameplay(mode == "playing" and not platform_suspended and not ad_pending)
-	AudioServer.set_bus_mute(0, platform_suspended or ad_pending or mode == "paused")
+	var muted: bool = wallet != null and not wallet.sound_enabled
+	AudioServer.set_bus_mute(0, platform_suspended or ad_pending or mode == "paused" or muted)
+	if platform_suspended or ad_pending or mode != "playing" or muted:
+		if bounce_sound != null: bounce_sound.stop()
 	if ui.is_empty(): return
-	_update_map_label_colors()
+	_update_environment_label_colors()
 	ui.ad_cover.visible = ad_pending or platform_suspended
 	ui.ad_label.text = "Просмотр рекламы…" if ad_pending else "Пауза\nВернитесь в игру"
 	ui.wallet_badge.visible = mode != "tutorial"
@@ -1050,10 +1052,6 @@ func _run_mechanics_tests() -> void:
 		assert(ui.options.size.y > 230, "Character selector is too short")
 	assert(ui.option_list.get_child_count() == Catalog.CHARACTERS.size())
 	select_character(Catalog.CHARACTERS[1].id)
-	_open_menu_page("maps")
-	select_map("sunset")
-	assert(selected_map == "sunset" and sky_material.sky_top_color == Catalog.MAPS[1].top)
-	select_map("clouds")
 	_open_menu_page("home")
 	start_game()
 	_clear_platforms()
@@ -1345,40 +1343,13 @@ func _run_platform_tests() -> void:
 	show_menu()
 	print("SKYJUMP_PLATFORM_PAUSE_OK physics input_block sound manual_pause")
 
-func _run_map_shop_tests() -> void:
-	var saved_wallet = wallet
-	var saved_map := selected_map
-	const PATH = "user://qa-map-shop-wallet.cfg"
-	Wallet.clear_profile(PATH)
-	wallet = Wallet.new(PATH)
-	_open_menu_page("maps")
-	assert(ui.option_list.get_child_count() == 6)
-	for entry in Catalog.MAPS:
-		select_map(entry.id)
-		assert(sky_material.sky_top_color == entry.top and cloud_material.albedo_color == entry.cloud)
-		assert(wallet.balance == 0 and wallet.owned_maps.is_empty(), "Preview spent coins")
-	assert(play_button.disabled)
-	_open_menu_page("home")
-	assert(selected_map == "sunset", "Locked preview did not restore the equipped map")
-	_open_menu_page("maps")
-	select_map("lavender")
-	wallet.earn(50)
-	_update_choice_labels()
-	assert(not play_button.disabled and "Купить" in play_button.text)
-	_menu_action()
-	assert(wallet.balance == 0 and wallet.owns_map("lavender") and wallet.active_map == "lavender")
-	wallet = Wallet.new(PATH)
-	assert(wallet.owns_map("lavender") and wallet.active_map == "lavender", "Map purchase did not survive reload")
-	_menu_action()
-	assert(menu_page == "home" and selected_map == "lavender" and wallet.balance == 0)
-	start_game()
-	assert(selected_map == "lavender")
-	show_menu()
-	wallet = saved_wallet
-	select_map(saved_map)
-	_update_wallet_labels()
-	Wallet.clear_profile(PATH)
-	print("SKYJUMP_MAP_SHOP_OK previews insufficient_funds purchase no_double_charge persistence selection")
+func _run_journey_test() -> void:
+	load("res://tests/progression_checks.gd").run()
+	load("res://tests/camera_framing_checks.gd").run(self)
+	await load("res://tests/journey_checks.gd").run(self)
+	if "--journey-tour" in OS.get_cmdline_user_args():
+		load("res://tests/journey_checks.gd").show_tour(self)
+	if not OS.has_feature("web"): get_tree().quit()
 
 func _run_camera_test() -> void:
 	var checks = load("res://tests/camera_framing_checks.gd")
@@ -1391,7 +1362,6 @@ func _run_self_test() -> void:
 	load("res://tests/camera_framing_checks.gd").run(self)
 	await _run_platform_tests()
 	await _run_reward_tests()
-	await _run_map_shop_tests()
 	await _run_mechanics_tests()
 	await _run_currency_tests()
 	var test_rng := RandomNumberGenerator.new()

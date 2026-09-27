@@ -40,11 +40,6 @@ static func run(game: Node3D) -> void:
 	print("SKYJUMP_CAMERA_OK five_aspects one_model tilt squash scrolling pause wrap threshold")
 
 static func integration(game: Node3D) -> void:
-	game.wallet.earn(maxi(0, 150 - game.wallet.balance))
-	game.wallet.purchase_map("moon")
-	game.select_map("moon")
-	assert(game.night_sky.visible and not game.clouds.visible)
-	assert(game.sky_material.sky_horizon_color.get_luminance() < 0.025)
 	game.start_game()
 	game._clear_platforms()
 	game.last_generated.y = 1000
@@ -66,9 +61,6 @@ static func integration(game: Node3D) -> void:
 	assert(game.camera.position.is_equal_approx(stopped), "Paused camera moved")
 	game.resume_game()
 	game.show_menu()
-	game.select_map("clouds")
-	assert(not game.night_sky.visible and game.clouds.visible)
-	game.select_map("moon")
 	game._update_camera(1.0)
-	assert(game.night_sky.visible and not game.clouds.visible)
-	print("SKYJUMP_CAMERA_INTEGRATION_OK fall restart pause moon clouds one_model")
+	assert(not game.journey.night.visible and game.clouds.visible)
+	print("SKYJUMP_CAMERA_INTEGRATION_OK fall restart pause earth_reset one_model")

@@ -1,12 +1,13 @@
 extends RefCounted
 ## One local profile: coins, owned characters, timed bonus and personal records.
 const Catalog = preload("res://scripts/catalog.gd")
+const LEGACY_MAP_PRICES = {"lavender": 50, "mint": 75, "peach": 100, "moon": 150}
 var balance: int = 0
 var path: String
 var persistent := true
 var owned: Array[String] = []
-var owned_maps: Array[String] = []
-var active_map := "clouds"
+var sound_enabled := true
+var refunded_maps_amount := 0
 var records: Array[Dictionary] = []
 var double_until: int = 0
 var revision: int = 0
@@ -34,12 +35,7 @@ func _init(save_path: String = "user://wallet.cfg") -> void:
 		if saved_owned is Array:
 			for id in saved_owned:
 				if id is String and not Catalog.character(id).is_empty() and not owned.has(id): owned.append(id)
-		var saved_maps = config.get_value("wallet", "owned_maps", [])
-		if saved_maps is Array:
-			for id in saved_maps:
-				if id is String and not Catalog.map_entry(id).is_empty() and not owned_maps.has(id): owned_maps.append(id)
-		var saved_map = config.get_value("wallet", "active_map", "clouds")
-		if saved_map is String and owns_map(saved_map): active_map = saved_map
+		sound_enabled = bool(config.get_value("wallet", "sound_enabled", true))
 		var expiry = config.get_value("wallet", "double_until", 0)
 		if expiry is int: double_until = maxi(0, expiry)
 		var saved_records = config.get_value("wallet", "records", [])
@@ -49,6 +45,13 @@ func _init(save_path: String = "user://wallet.cfg") -> void:
 					if entry.score >= 0 and not Catalog.character(entry.character).is_empty():
 						records.append({"id": entry.id, "score": mini(entry.score, 1000000000), "character": entry.character})
 		_sort_records()
+		if int(config.get_value("wallet", "version", 0)) < 4:
+			var saved_maps = config.get_value("wallet", "owned_maps", [])
+			if saved_maps is Array:
+				for id in LEGACY_MAP_PRICES:
+					if saved_maps.has(id): refunded_maps_amount += LEGACY_MAP_PRICES[id]
+			balance = mini(balance + refunded_maps_amount, 1000000000)
+			_save() # Version and refund are saved together, including the Web mirror.
 
 func earn(amount: int = 1) -> void:
 	if amount <= 0:
@@ -72,25 +75,9 @@ func activate_double_coins() -> void:
 	double_until = int(clock.call()) + 600
 	_save()
 
-func owns_map(id: String) -> bool:
-	var entry := Catalog.map_entry(id)
-	return not entry.is_empty() and (entry.price == 0 or owned_maps.has(id))
-
-func purchase_map(id: String) -> bool:
-	var entry := Catalog.map_entry(id)
-	if entry.is_empty() or owns_map(id) or balance < entry.price: return false
-	balance -= entry.price
-	owned_maps.append(id)
-	active_map = id
+func toggle_sound() -> void:
+	sound_enabled = not sound_enabled
 	_save()
-	return true
-
-func equip_map(id: String) -> bool:
-	if not owns_map(id): return false
-	if active_map != id:
-		active_map = id
-		_save()
-	return true
 
 func double_remaining() -> int:
 	return maxi(0, double_until - int(clock.call()))
@@ -119,11 +106,10 @@ func _save() -> void:
 	revision += 1
 	var config := ConfigFile.new()
 	config.set_value("wallet", "revision", revision)
-	config.set_value("wallet", "version", 3)
+	config.set_value("wallet", "version", 4)
 	config.set_value("wallet", "coins", balance)
 	config.set_value("wallet", "owned", owned)
-	config.set_value("wallet", "owned_maps", owned_maps)
-	config.set_value("wallet", "active_map", active_map)
+	config.set_value("wallet", "sound_enabled", sound_enabled)
 	config.set_value("wallet", "records", records)
 	config.set_value("wallet", "double_until", double_until)
 	persistent = config.save(path) == OK and OS.is_userfs_persistent()

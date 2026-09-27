@@ -12,10 +12,10 @@ func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	heading = _text("Как играть", 34)
-	caption = _text("Прыжки — автоматически", 19)
+	caption = _text("Удерживайте пальцем или мышью", 18)
 	left_text = _text("Удерживайте\nлевую половину\n\nДвижение влево", 20)
 	right_text = _text("Удерживайте\nправую половину\n\nДвижение вправо", 20)
-	keyboard = _text("На клавиатуре: A / D или стрелки", 17)
+	keyboard = _text("Прыжки — автоматически\nКлавиатура: A / D или стрелки", 17)
 	start_button = Button.new()
 	start_button.text = "Понятно, играем!"
 	start_button.pressed.connect(func(): accepted.emit())

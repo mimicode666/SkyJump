@@ -5,6 +5,8 @@ var balance: int = 0
 var path: String
 var persistent := true
 var owned: Array[String] = []
+var owned_maps: Array[String] = []
+var active_map := "clouds"
 var records: Array[Dictionary] = []
 var double_until: int = 0
 var revision: int = 0
@@ -32,6 +34,12 @@ func _init(save_path: String = "user://wallet.cfg") -> void:
 		if saved_owned is Array:
 			for id in saved_owned:
 				if id is String and not Catalog.character(id).is_empty() and not owned.has(id): owned.append(id)
+		var saved_maps = config.get_value("wallet", "owned_maps", [])
+		if saved_maps is Array:
+			for id in saved_maps:
+				if id is String and not Catalog.map_entry(id).is_empty() and not owned_maps.has(id): owned_maps.append(id)
+		var saved_map = config.get_value("wallet", "active_map", "clouds")
+		if saved_map is String and owns_map(saved_map): active_map = saved_map
 		var expiry = config.get_value("wallet", "double_until", 0)
 		if expiry is int: double_until = maxi(0, expiry)
 		var saved_records = config.get_value("wallet", "records", [])
@@ -64,6 +72,26 @@ func activate_double_coins() -> void:
 	double_until = int(clock.call()) + 600
 	_save()
 
+func owns_map(id: String) -> bool:
+	var entry := Catalog.map_entry(id)
+	return not entry.is_empty() and (entry.price == 0 or owned_maps.has(id))
+
+func purchase_map(id: String) -> bool:
+	var entry := Catalog.map_entry(id)
+	if entry.is_empty() or owns_map(id) or balance < entry.price: return false
+	balance -= entry.price
+	owned_maps.append(id)
+	active_map = id
+	_save()
+	return true
+
+func equip_map(id: String) -> bool:
+	if not owns_map(id): return false
+	if active_map != id:
+		active_map = id
+		_save()
+	return true
+
 func double_remaining() -> int:
 	return maxi(0, double_until - int(clock.call()))
 
@@ -91,9 +119,11 @@ func _save() -> void:
 	revision += 1
 	var config := ConfigFile.new()
 	config.set_value("wallet", "revision", revision)
-	config.set_value("wallet", "version", 2)
+	config.set_value("wallet", "version", 3)
 	config.set_value("wallet", "coins", balance)
 	config.set_value("wallet", "owned", owned)
+	config.set_value("wallet", "owned_maps", owned_maps)
+	config.set_value("wallet", "active_map", active_map)
 	config.set_value("wallet", "records", records)
 	config.set_value("wallet", "double_until", double_until)
 	persistent = config.save(path) == OK and OS.is_userfs_persistent()

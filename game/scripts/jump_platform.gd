@@ -127,7 +127,6 @@ func register_landing() -> bool:
 func break_apart() -> void:
 	break_origin = position
 	break_elapsed = 0.0
-	set_obscured(false)
 	# The original low-poly disk becomes a few cheap fragments, with no rigid bodies.
 	for part in parts:
 		part.hide()
@@ -149,9 +148,3 @@ func animate_break(delta: float) -> void:
 	scale = Vector3.ONE * (1.0 - t * 0.75)
 	if t >= 1:
 		queue_free()
-
-func set_obscured(obscured: bool) -> void:
-	for part in parts:
-		var mat: StandardMaterial3D = part.material_override
-		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA if obscured else BaseMaterial3D.TRANSPARENCY_DISABLED
-		mat.albedo_color.a = 0.2 if obscured else 1.0

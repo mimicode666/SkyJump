@@ -85,6 +85,7 @@ func _ready() -> void:
 	_setup_world()
 	_setup_ui()
 	select_character(selected)
+	select_map(wallet.active_map)
 	get_window().size_changed.connect(_queue_layout)
 	_resize_ui()
 	await RenderingServer.frame_post_draw
@@ -466,8 +467,10 @@ func _resize_ui() -> void:
 	_place(ui.back, Vector2(margin, 16 if compact else 24), Vector2(124, 48))
 	ui.heading.add_theme_font_size_override("font_size", 30 if compact else 44)
 	_place(ui.heading, Vector2(margin, 44 if short_landscape else 53), Vector2(menu_width, 52))
+	ui.heading.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER if menu_page == "records" else HORIZONTAL_ALIGNMENT_LEFT
+	if menu_page == "records": ui.heading.size.x = area.x - margin * 2
 	ui.subtitle.text = "Выберите героя и отправляйтесь в небо" if menu_page == "home" else ("Нажмите, чтобы выбрать героя" if menu_page == "characters" else "Нажмите, чтобы сменить фон")
-	if menu_page == "records": ui.subtitle.text = "Ваш лучший результат"
+	ui.subtitle.visible = menu_page != "records"
 	ui.subtitle.add_theme_font_size_override("font_size", 16 if compact else 20)
 	ui.subtitle.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_place(ui.subtitle, Vector2(margin, 90 if short_landscape else (98 if compact else 117)), Vector2(menu_width, 42))
@@ -494,10 +497,15 @@ func _resize_ui() -> void:
 	ui.options.visible = menu_page != "home"
 	var content_top: float = ui.subtitle.position.y + 46
 	var options_y: float = content_top
+	if menu_page == "records": options_y = ui.heading.position.y + ui.heading.size.y + 18
 	if portrait and menu_page in ["characters", "maps"]:
 		options_y += clampf((area.y - 500) * 0.3 + 100, 120, 200)
 	var list_width: float = minf(640, area.x - margin * 2) if menu_page == "records" else menu_width
 	_place(ui.options, Vector2(margin, options_y), Vector2(list_width, maxf(80, ui.bottom.position.y - options_y - 16)))
+	if menu_page == "records":
+		ui.options.position.x = (area.x - list_width) * 0.5
+		ui.bottom.size.x = minf(360, area.x - margin * 2)
+		ui.bottom.position.x = (area.x - ui.bottom.size.x) * 0.5
 	_place(score_label, Vector2(margin, 20), Vector2(180, 48))
 	score_label.add_theme_font_size_override("font_size", 34 if compact else 42)
 	_place(record_label, Vector2(margin, 65 if compact else 78), Vector2(180, 24))
@@ -572,15 +580,17 @@ func _update_choice_labels() -> void:
 	for button in ui.option_list.get_children():
 		if not button is Button: continue
 		button.set_pressed_no_signal(button.get_meta("choice") == (selected if menu_page == "characters" else selected_map))
-		if menu_page == "characters":
-			var entry := Catalog.character(button.get_meta("choice"))
-			var status: String = " · доступен" if entry.price == 0 else (" · куплен" if wallet.owns_character(entry.id) else "")
+		if menu_page in ["characters", "maps"]:
+			var entry := Catalog.character(button.get_meta("choice")) if menu_page == "characters" else Catalog.map_entry(button.get_meta("choice"))
+			var owned: bool = wallet.owns_character(entry.id) if menu_page == "characters" else wallet.owns_map(entry.id)
+			var status: String = " · доступен" if entry.price == 0 else (" · куплен" if owned else "")
 			button.text = "%s\n%d монет%s" % [entry.name, entry.price, status]
 	play_button.disabled = false
 	play_button.text = "Прыгать!" if menu_page == "home" else "В меню"
-	if menu_page == "characters":
-		var entry := Catalog.character(selected)
-		if wallet.owns_character(selected): play_button.text = "Выбрать"
+	if menu_page in ["characters", "maps"]:
+		var entry := Catalog.character(selected) if menu_page == "characters" else Catalog.map_entry(selected_map)
+		var owned: bool = wallet.owns_character(selected) if menu_page == "characters" else wallet.owns_map(selected_map)
+		if owned: play_button.text = "Выбрать"
 		else:
 			play_button.disabled = wallet.balance < entry.price
 			play_button.text = "Не хватает %d монет" % (entry.price - wallet.balance) if play_button.disabled else "Купить за %d монет" % entry.price
@@ -594,11 +604,16 @@ func _menu_action() -> void:
 		if wallet.purchase_character(selected): equipped = selected
 		_update_wallet_labels()
 		_update_choice_labels()
+	elif menu_page == "maps" and not wallet.owns_map(selected_map):
+		wallet.purchase_map(selected_map)
+		_update_wallet_labels()
+		_update_choice_labels()
 	else: _open_menu_page("home")
 
 func _open_menu_page(page: String) -> void:
 	menu_page = page
 	if page == "home" and not wallet.owns_character(selected): select_character(equipped)
+	if page == "home" and not wallet.owns_map(selected_map): select_map(wallet.active_map)
 	player.visible = page != "records"
 	world.visible = page != "records"
 	ui.title.text = "ПРЫЖОК В ОБЛАКА" if page == "home" else "SkyJump"
@@ -618,7 +633,7 @@ func _open_menu_page(page: String) -> void:
 				else: select_map(id)
 				_update_choice_labels())
 			button.toggle_mode = true
-			button.custom_minimum_size.y = 66 if page == "characters" else 54
+			button.custom_minimum_size.y = 66
 			button.add_theme_font_size_override("font_size", 17)
 			button.set_meta("choice", id)
 			ui.option_list.add_child(button)
@@ -642,17 +657,20 @@ func _build_record_card() -> void:
 	content.add_child(best)
 	var divider := HSeparator.new()
 	content.add_child(divider)
-	content.add_child(_label("ТОП НА ЭТОМ УСТРОЙСТВЕ", 13))
+	content.add_child(_label("Список лучших", 19))
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 18)
 	content.add_child(row)
-	var rank := _label("1", 32)
+	var rank := _label("1", 23)
+	rank.custom_minimum_size.x = 32
 	rank.add_theme_color_override("font_color", Color("6b9b3d"))
 	row.add_child(rank)
-	var details := VBoxContainer.new()
-	row.add_child(details)
-	details.add_child(_label("Вы", 23))
-	details.add_child(_label("Ваше место в топе", 15))
+	var player_name := _label("Вы", 23)
+	player_name.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(player_name)
+	var distance := _label("%d м" % wallet.best_score(), 23)
+	distance.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	row.add_child(distance)
 
 func _request_start() -> void:
 	if ad_pending or platform_suspended: return
@@ -677,6 +695,7 @@ func select_map(id: String) -> void:
 	for entry in Catalog.MAPS:
 		if entry.id != id: continue
 		selected_map = id
+		if wallet.owns_map(id): wallet.equip_map(id)
 		sky_material.sky_top_color = entry.top
 		sky_material.sky_horizon_color = entry.horizon
 		sky_material.ground_horizon_color = entry.horizon
@@ -688,6 +707,7 @@ func start_game() -> void:
 	if ad_pending or platform_suspended: return
 	ui.tutorial.hide()
 	if not wallet.owns_character(selected): selected = equipped
+	if not wallet.owns_map(selected_map): select_map(wallet.active_map)
 	player.show()
 	world.show()
 	revive_used = false
@@ -784,10 +804,6 @@ func _process(delta: float) -> void:
 		visual.rotation.z = lerpf(visual.rotation.z, -velocity.x * 0.035, delta * 10.0)
 		bounce_flash = maxf(0, bounce_flash - delta * 5)
 		player.scale = Vector3(1.0 + bounce_flash * 0.08, 1.0 - bounce_flash * 0.1, 1.0 + bounce_flash * 0.08)
-		for i in range(platforms.size()):
-			var p: Vector3 = platforms[i]
-			var overlaps: bool = player.position.y < p.y - 0.05 and player.position.y + 1.6 > p.y and absf(player.position.x - p.x) < 1.4
-			platform_nodes[i].set_obscured(overlaps)
 		for i in range(broken_platforms.size() - 1, -1, -1):
 			if not is_instance_valid(broken_platforms[i]):
 				broken_platforms.remove_at(i)
@@ -821,6 +837,11 @@ func _update_camera(delta: float) -> void:
 	camera.look_at(Vector3(target_x, camera.position.y - 4.0, 0), Vector3.UP)
 	camera.keep_aspect = Camera3D.KEEP_WIDTH if portrait else Camera3D.KEEP_HEIGHT
 	camera.size = (7.2 if portrait else 8.7) if mode == "menu" else (8.8 if portrait else 10.0)
+	if visual != null:
+		# Orthographic view: shifting only the artwork toward the camera preserves
+		# its screen position and scale, but keeps it in front of solid platforms.
+		# The logical player, landings, coins and source GLB materials stay unchanged.
+		visual.global_position = player.global_position + (camera.global_basis.z * 4.0 if mode != "menu" else Vector3.ZERO)
 
 func _fall_height() -> float:
 	return camera_height - 7.0
@@ -1000,6 +1021,11 @@ func _run_mechanics_tests() -> void:
 	_clear_platforms()
 	last_generated.y = 1000
 	_add_platform(Vector3.ZERO, 0, false, "boost")
+	_update_camera(1.0)
+	assert(camera.unproject_position(visual.global_position).distance_to(camera.unproject_position(player.global_position)) < 0.02, "Foreground artwork moved on screen")
+	assert(visual.global_position.distance_to(player.global_position) > 3.9, "Artwork is not in front of the platforms")
+	for part in platform_nodes[0].parts:
+		assert(part.material_override.transparency == BaseMaterial3D.TRANSPARENCY_DISABLED and part.material_override.albedo_color.a == 1.0)
 	player.position = Vector3(0, 2, 0)
 	velocity = Vector2(0, -1)
 	for frame in range(60):
@@ -1085,6 +1111,35 @@ func _run_mechanics_tests() -> void:
 	for pad in ui.pads: pad._input(blocked_drag)
 	assert(not touch_left and not touch_right, "A touch begun on Pause leaked into steering")
 	_reset_touch()
+	var mouse := InputEventMouseButton.new()
+	mouse.button_index = MOUSE_BUTTON_LEFT
+	mouse.pressed = true
+	mouse.position = get_viewport().get_stretch_transform() * left.get_global_rect().get_center()
+	Input.parse_input_event(mouse.duplicate())
+	Input.flush_buffered_events()
+	assert(touch_left and not touch_right, "Mouse press did not steer left")
+	var mouse_motion := InputEventMouseMotion.new()
+	mouse_motion.button_mask = MOUSE_BUTTON_MASK_LEFT
+	mouse_motion.position = get_viewport().get_stretch_transform() * right.get_global_rect().get_center()
+	Input.parse_input_event(mouse_motion)
+	Input.flush_buffered_events()
+	assert(not touch_left and touch_right, "Held mouse did not cross the middle")
+	mouse.pressed = false
+	mouse.position = mouse_motion.position
+	Input.parse_input_event(mouse.duplicate())
+	Input.flush_buffered_events()
+	assert(not touch_left and not touch_right, "Mouse release stuck")
+	mouse.pressed = true
+	mouse.device = InputEvent.DEVICE_ID_EMULATION
+	for pad in ui.pads: pad._input(mouse)
+	assert(not touch_left and not touch_right, "Synthetic mouse duplicated touch")
+	mouse.device = 0
+	mouse.position = ui.pause.get_global_rect().get_center()
+	for pad in ui.pads: pad._input(mouse)
+	mouse_motion.position = left.get_global_rect().get_center()
+	for pad in ui.pads: pad._input(mouse_motion)
+	assert(not touch_left and not touch_right, "Mouse press on Pause leaked into steering")
+	_reset_touch()
 	_clear_platforms()
 	_add_platform(Vector3.ZERO, 0, false, "spikes")
 	player.position = Vector3(0, 2, 0)
@@ -1095,7 +1150,7 @@ func _run_mechanics_tests() -> void:
 		if mode == "gameover": break
 	assert(mode == "gameover" and player.position.y > 0, "Spikes did not end the run")
 	show_menu()
-	print("SKYJUMP_MECHANICS_OK boost moving pause wrap_left wrap_right multitouch cancel spikes catalogs tutorial touch_halves cross_middle pause_exclusion")
+	print("SKYJUMP_MECHANICS_OK boost moving pause wrap_left wrap_right multitouch cancel spikes catalogs tutorial touch_halves cross_middle pause_exclusion mouse_halves")
 
 func _run_currency_tests() -> void:
 	for entry in Catalog.CHARACTERS:
@@ -1252,10 +1307,46 @@ func _run_platform_tests() -> void:
 	show_menu()
 	print("SKYJUMP_PLATFORM_PAUSE_OK physics input_block sound manual_pause")
 
+func _run_map_shop_tests() -> void:
+	var saved_wallet = wallet
+	var saved_map := selected_map
+	const PATH = "user://qa-map-shop-wallet.cfg"
+	Wallet.clear_profile(PATH)
+	wallet = Wallet.new(PATH)
+	_open_menu_page("maps")
+	assert(ui.option_list.get_child_count() == 6)
+	for entry in Catalog.MAPS:
+		select_map(entry.id)
+		assert(sky_material.sky_top_color == entry.top and cloud_material.albedo_color == entry.cloud)
+		assert(wallet.balance == 0 and wallet.owned_maps.is_empty(), "Preview spent coins")
+	assert(play_button.disabled)
+	_open_menu_page("home")
+	assert(selected_map == "sunset", "Locked preview did not restore the equipped map")
+	_open_menu_page("maps")
+	select_map("lavender")
+	wallet.earn(50)
+	_update_choice_labels()
+	assert(not play_button.disabled and "Купить" in play_button.text)
+	_menu_action()
+	assert(wallet.balance == 0 and wallet.owns_map("lavender") and wallet.active_map == "lavender")
+	wallet = Wallet.new(PATH)
+	assert(wallet.owns_map("lavender") and wallet.active_map == "lavender", "Map purchase did not survive reload")
+	_menu_action()
+	assert(menu_page == "home" and selected_map == "lavender" and wallet.balance == 0)
+	start_game()
+	assert(selected_map == "lavender")
+	show_menu()
+	wallet = saved_wallet
+	select_map(saved_map)
+	_update_wallet_labels()
+	Wallet.clear_profile(PATH)
+	print("SKYJUMP_MAP_SHOP_OK previews insufficient_funds purchase no_double_charge persistence selection")
+
 func _run_self_test() -> void:
 	load("res://tests/progression_checks.gd").run()
 	await _run_platform_tests()
 	await _run_reward_tests()
+	await _run_map_shop_tests()
 	await _run_mechanics_tests()
 	await _run_currency_tests()
 	var test_rng := RandomNumberGenerator.new()

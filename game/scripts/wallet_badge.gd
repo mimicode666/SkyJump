@@ -2,15 +2,24 @@ extends Control
 ## A light 2D coin; no extra 3D viewport or texture needed for the HUD.
 var phase := 0.0
 var value := Label.new()
+var display_scale := 1.4
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	value.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	value.position = Vector2(38, 0)
-	value.add_theme_font_size_override("font_size", 20)
+	value.position = Vector2(48, 0)
+	value.add_theme_font_size_override("font_size", 28)
+	value.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	value.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	value.size = Vector2(126, 34)
+	value.size = Vector2(128, 48)
 	add_child(value)
+
+func set_menu_size(in_menu: bool) -> void:
+	display_scale = 1.4 if in_menu else 1.0
+	value.position = Vector2(48, 0) if in_menu else Vector2(38, 0)
+	value.size = Vector2(128, 48) if in_menu else Vector2(126, 34)
+	value.add_theme_font_size_override("font_size", 28 if in_menu else 20)
+	queue_redraw()
 
 func update_balance(balance: int, persistent: bool) -> void:
 	value.text = str(balance)
@@ -23,7 +32,7 @@ func _process(delta: float) -> void:
 	queue_redraw()
 
 func _draw() -> void:
-	draw_set_transform(Vector2(16, 17), 0, Vector2(maxf(absf(cos(phase)), 0.14), 1))
+	draw_set_transform(Vector2(16, 17) * display_scale, 0, Vector2(maxf(absf(cos(phase)), 0.14), 1) * display_scale)
 	draw_circle(Vector2.ZERO, 14, Color("d79724"))
 	draw_circle(Vector2(-1, -1), 11.5, Color("ffd24c"))
 	draw_arc(Vector2(-1, -1), 9, 0, TAU, 24, Color("fff0a3"), 1.5, true)

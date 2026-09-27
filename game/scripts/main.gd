@@ -9,6 +9,7 @@ const Coin = preload("res://scripts/coin.gd")
 const WalletBadge = preload("res://scripts/wallet_badge.gd")
 const Catalog = preload("res://scripts/catalog.gd")
 const TouchDirection = preload("res://scripts/touch_direction.gd")
+const HowToPlay = preload("res://scripts/how_to_play.gd")
 const COLORS = [Color("65b333"), Color("efaa25"), Color("935aca")]
 var characters = Characters.new()
 var selected: String = Catalog.CHARACTERS[0].id
@@ -57,6 +58,7 @@ var ui: Dictionary = {}
 var portrait := false
 var compact := false
 var touch_controls := false
+var tutorial_seen := false
 var layout_pending := false
 var menu_page := "home"
 var selected_map := "clouds"
@@ -366,6 +368,7 @@ func _setup_ui() -> void:
 	for side in [-1, 1]:
 		var touch := TouchDirection.new()
 		touch.direction = side
+		touch.excluded_controls.append(pause_button)
 		touch.held_changed.connect(func(pressed: bool): _set_touch(side, pressed))
 		hud.add_child(touch)
 		touch_pads.append(touch)
@@ -401,6 +404,10 @@ func _setup_ui() -> void:
 	# Above every menu/scroll list, so the balance cannot be covered by cards.
 	var wallet_badge := WalletBadge.new()
 	root.add_child(wallet_badge)
+	var tutorial := HowToPlay.new()
+	root.add_child(tutorial)
+	tutorial.accepted.connect(_accept_tutorial)
+	tutorial.hide()
 	var ad_cover := ColorRect.new()
 	ad_cover.color = Color(0.83, 0.93, 0.98, 0.94)
 	ad_cover.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -411,7 +418,7 @@ func _setup_ui() -> void:
 	ad_label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	ad_cover.add_child(ad_label)
 	ui = {"title": title, "heading": heading, "subtitle": subtitle, "pickers": pickers,
-		"back": back_button,
+		"back": back_button, "tutorial": tutorial,
 		"ad_cover": ad_cover, "ad_label": ad_label,
 		"bottom": menu_bottom, "menu_hint": menu_hint, "pause": pause_button,
 		"actions": actions, "bonus": bonus_button, "continue": continue_button,
@@ -450,21 +457,23 @@ func _resize_ui() -> void:
 	var short_landscape: bool = compact and not portrait
 	var menu_width: float = area.x - margin * 2 if portrait else minf(440, area.x * 0.52 - margin)
 	ui.character_choice.add_theme_font_size_override("font_size", 17 if compact else 20)
-	_place(ui.wallet_badge, Vector2(area.x - margin - 164, 16 if compact else 24) if mode == "menu" else Vector2(margin, 91 if compact else 104), Vector2(164, 34))
+	_place(ui.wallet_badge, Vector2(area.x - margin - 176, 16 if compact else 24) if mode == "menu" else Vector2(margin, 91 if compact else 104), Vector2(176, 48))
+	ui.wallet_badge.set_menu_size(mode == "menu")
 	_place(ui.title, Vector2(margin, 16 if short_landscape else 24), Vector2(menu_width, 24))
+	ui.title.add_theme_font_size_override("font_size", 12 if compact else 16)
 	ui.title.visible = menu_page == "home"
 	ui.back.visible = menu_page != "home"
-	_place(ui.back, Vector2(margin, 16 if compact else 24), Vector2(124, 34))
+	_place(ui.back, Vector2(margin, 16 if compact else 24), Vector2(124, 48))
 	ui.heading.add_theme_font_size_override("font_size", 30 if compact else 44)
 	_place(ui.heading, Vector2(margin, 44 if short_landscape else 53), Vector2(menu_width, 52))
 	ui.subtitle.text = "Выберите героя и отправляйтесь в небо" if menu_page == "home" else ("Нажмите, чтобы выбрать героя" if menu_page == "characters" else "Нажмите, чтобы сменить фон")
-	if menu_page == "records": ui.subtitle.text = "Ваши лучшие забеги на этом устройстве\nОнлайн-таблица появится позже"
+	if menu_page == "records": ui.subtitle.text = "Ваш лучший результат"
 	ui.subtitle.add_theme_font_size_override("font_size", 16 if compact else 20)
 	ui.subtitle.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_place(ui.subtitle, Vector2(margin, 90 if short_landscape else (98 if compact else 117)), Vector2(menu_width, 42))
-	if short_landscape and menu_page != "home":
-		ui.heading.position.y += 14
-		ui.subtitle.position.y += 11
+	if menu_page != "home":
+		ui.heading.position.y = ui.back.position.y + ui.back.size.y + 10
+		ui.subtitle.position.y = ui.heading.position.y + 48
 	_place(ui.pickers, Vector2(margin, 148 if short_landscape else (159 if compact else 195)), Vector2(menu_width, 120))
 	for button in [ui.character_choice, ui.map_choice]:
 		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -472,31 +481,33 @@ func _resize_ui() -> void:
 	_place(model_label, Vector2(margin, 272 if compact else 330), Vector2(menu_width, 46))
 	model_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	var bottom_height: float = 132 if portrait else (116 if compact else 155)
+	if menu_page != "home": bottom_height = 84
 	_place(ui.bottom, Vector2(margin, area.y - bottom_height), Vector2(menu_width, 0))
 	play_button.custom_minimum_size = Vector2(0, 58)
 	ui.bottom.add_theme_constant_override("separation", 8 if compact else 15)
 	ui.menu_hint.add_theme_font_size_override("font_size", 14 if compact and not portrait else 16)
-	ui.menu_hint.text = ("Удерживайте кнопки внизу экрана\nПрыжки — автоматически" if touch_controls else "A / D или стрелки — движение\nПрыжки — автоматически") if menu_page == "home" else ("Нажмите на героя для просмотра" if menu_page == "characters" else "")
+	ui.menu_hint.text = ("Касайтесь левой или правой половины\nПрыжки — автоматически" if touch_controls else "A / D или стрелки — движение\nПрыжки — автоматически") if menu_page == "home" else ""
+	ui.menu_hint.visible = menu_page == "home"
 	ui.pickers.visible = menu_page == "home"
 	ui.actions.visible = menu_page == "home"
 	_place(ui.actions, Vector2(margin, ui.bottom.position.y - 88) if portrait else Vector2(area.x * 0.55, area.y - 86), Vector2(menu_width if portrait else area.x * 0.45 - margin, 72))
 	ui.options.visible = menu_page != "home"
-	var options_y: float = area.y - bottom_height - 150 if portrait else 166.0
-	if menu_page == "records": options_y = 164.0
-	_place(ui.options, Vector2(margin, options_y), Vector2(menu_width, 132 if portrait else maxf(100, area.y - bottom_height - options_y - 18)))
-	if menu_page == "records": ui.options.size.y = ui.bottom.position.y - options_y - 18
+	var content_top: float = ui.subtitle.position.y + 46
+	var options_y: float = content_top
+	if portrait and menu_page in ["characters", "maps"]:
+		options_y += clampf((area.y - 500) * 0.3 + 100, 120, 200)
+	var list_width: float = minf(640, area.x - margin * 2) if menu_page == "records" else menu_width
+	_place(ui.options, Vector2(margin, options_y), Vector2(list_width, maxf(80, ui.bottom.position.y - options_y - 16)))
 	_place(score_label, Vector2(margin, 20), Vector2(180, 48))
 	score_label.add_theme_font_size_override("font_size", 34 if compact else 42)
 	_place(record_label, Vector2(margin, 65 if compact else 78), Vector2(180, 24))
 	_place(ui.pause, Vector2(area.x - margin - 112, 24), Vector2(112, 52))
 	ui.hint.visible = not touch_controls
 	_place(ui.hint, Vector2(margin, area.y - 40), Vector2(area.x - margin * 2, 24))
-	var pad_width: float = minf(132, (area.x - margin * 3) * 0.5)
-	var pad_height: float = 76 if portrait else 64
 	for i in range(2):
 		var pad: Control = ui.pads[i]
-		pad.visible = touch_controls and mode not in ["paused", "gameover"]
-		_place(pad, Vector2(margin if i == 0 else area.x - margin - pad_width, area.y - pad_height - 28), Vector2(pad_width, pad_height))
+		pad.visible = mode == "playing" and not platform_suspended and not ad_pending
+		_place(pad, Vector2(i * area.x * 0.5, 0), Vector2(area.x * 0.5, area.y))
 	ui.column.custom_minimum_size.x = minf(380, area.x - margin * 2)
 	ui.column.size.x = ui.column.custom_minimum_size.x
 	ui.column.add_theme_constant_override("separation", 12 if compact else 18)
@@ -578,7 +589,7 @@ func _update_choice_labels() -> void:
 
 func _menu_action() -> void:
 	if ad_pending: return
-	if menu_page == "home": start_game()
+	if menu_page == "home": _request_start()
 	elif menu_page == "characters" and not wallet.owns_character(selected):
 		if wallet.purchase_character(selected): equipped = selected
 		_update_wallet_labels()
@@ -598,14 +609,7 @@ func _open_menu_page(page: String) -> void:
 		ui.option_list.remove_child(child)
 		child.queue_free()
 	if page == "records":
-		if wallet.records.is_empty():
-			var empty := _label("Пока нет результатов.\nПора прыгнуть!", 20)
-			ui.option_list.add_child(empty)
-		for i in range(wallet.records.size()):
-			var record: Dictionary = wallet.records[i]
-			var row := _label("%02d   ·   %d м\n%s" % [i + 1, record.score, Catalog.character(record.character).name], 19)
-			row.custom_minimum_size.y = 68
-			ui.option_list.add_child(row)
+		_build_record_card()
 	elif page in ["characters", "maps"]:
 		for entry in (Catalog.CHARACTERS if page == "characters" else Catalog.MAPS):
 			var id: String = entry.id
@@ -622,6 +626,53 @@ func _open_menu_page(page: String) -> void:
 	ui.options.scroll_vertical = 0
 	_resize_ui()
 
+func _build_record_card() -> void:
+	var card := PanelContainer.new()
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(1, 1, 1, 0.96)
+	style.set_corner_radius_all(22)
+	style.set_content_margin_all(22)
+	card.add_theme_stylebox_override("panel", style)
+	ui.option_list.add_child(card)
+	var content := VBoxContainer.new()
+	content.add_theme_constant_override("separation", 16)
+	card.add_child(content)
+	content.add_child(_label("Рекорд за всё время", 19))
+	var best := _label("%d м" % wallet.best_score(), 44)
+	content.add_child(best)
+	var divider := HSeparator.new()
+	content.add_child(divider)
+	content.add_child(_label("ТОП НА ЭТОМ УСТРОЙСТВЕ", 13))
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 18)
+	content.add_child(row)
+	var rank := _label("1", 32)
+	rank.add_theme_color_override("font_color", Color("6b9b3d"))
+	row.add_child(rank)
+	var details := VBoxContainer.new()
+	row.add_child(details)
+	details.add_child(_label("Вы", 23))
+	details.add_child(_label("Ваше место в топе", 15))
+
+func _request_start() -> void:
+	if ad_pending or platform_suspended: return
+	if tutorial_seen:
+		start_game()
+		return
+	mode = "tutorial"
+	_reset_touch()
+	menu.hide()
+	hud.hide()
+	overlay.hide()
+	ui.tutorial.show()
+	ui.tutorial.start_button.grab_focus()
+	_sync_platform_state()
+
+func _accept_tutorial() -> void:
+	if mode != "tutorial" or ad_pending or platform_suspended: return
+	tutorial_seen = true
+	start_game()
+
 func select_map(id: String) -> void:
 	for entry in Catalog.MAPS:
 		if entry.id != id: continue
@@ -635,6 +686,7 @@ func select_map(id: String) -> void:
 
 func start_game() -> void:
 	if ad_pending or platform_suspended: return
+	ui.tutorial.hide()
 	if not wallet.owns_character(selected): selected = equipped
 	player.show()
 	world.show()
@@ -665,7 +717,7 @@ func start_game() -> void:
 	menu.hide()
 	overlay.hide()
 	hud.show()
-	for pad in ui.pads: pad.visible = touch_controls
+	for pad in ui.pads: pad.show()
 	_update_camera(1.0)
 	score_label.text = "0 м"
 	record_label.text = "Рекорд: %d м" % session_best
@@ -753,10 +805,16 @@ func _update_camera(delta: float) -> void:
 	if mode == "menu": player.scale = Vector3.ONE
 	if mode == "menu" and portrait and not ui.is_empty():
 		var area := Vector2(get_window().content_scale_size)
-		var model_center: float = (287.0 + ui.actions.position.y) * 0.5 if menu_page == "home" else (158.0 + ui.options.position.y) * 0.5
-		var preview_scale: float = clampf((ui.actions.position.y - 287.0) / 250.0, 0.72, 1.0) if menu_page == "home" else 1.0
+		var preview_top: float = ui.subtitle.position.y + 46
+		var model_center: float = (287.0 + ui.actions.position.y) * 0.5 if menu_page == "home" else (preview_top + ui.options.position.y) * 0.5
+		if menu_page != "home": model_center -= 7
+		var preview_scale: float = clampf((ui.actions.position.y - 287.0) / 250.0, 0.72, 1.0) if menu_page == "home" else clampf((ui.options.position.y - preview_top - 20) * 7.2 / area.x / 3.6, 0.35, 0.78)
 		player.scale = Vector3.ONE * preview_scale
 		target_y = 1.65 * preview_scale + (model_center - area.y * 0.5) * 7.2 / area.x
+	elif mode == "menu" and menu_page == "characters":
+		player.scale = Vector3.ONE * 0.8
+	if mode == "menu":
+		for stand in platform_nodes: stand.scale = Vector3(2, 1, 2) * player.scale.x
 	var target_x: float = (1.5 if portrait else -0.7) if mode == "menu" else 0.0
 	var desired := Vector3(target_x, target_y + 4.0, 13)
 	camera.position = camera.position.lerp(desired, minf(delta * 7.0, 1.0))
@@ -783,7 +841,8 @@ func _sync_platform_state() -> void:
 	if ui.is_empty(): return
 	ui.ad_cover.visible = ad_pending or platform_suspended
 	ui.ad_label.text = "Просмотр рекламы…" if ad_pending else "Пауза\nВернитесь в игру"
-	for pad in ui.pads: pad.visible = touch_controls and mode == "playing" and not platform_suspended and not ad_pending
+	ui.wallet_badge.visible = mode != "tutorial"
+	for pad in ui.pads: pad.visible = mode == "playing" and not platform_suspended and not ad_pending
 
 func _update_reward_buttons() -> void:
 	if ui.is_empty(): return
@@ -861,7 +920,7 @@ func pause_game() -> void:
 func resume_game() -> void:
 	if ad_pending: return
 	mode = "playing"
-	for pad in ui.pads: pad.visible = touch_controls
+	for pad in ui.pads: pad.show()
 	overlay.hide()
 	_sync_platform_state()
 
@@ -880,6 +939,7 @@ func finish_game() -> void:
 
 func show_menu() -> void:
 	if ad_pending: return
+	ui.tutorial.hide()
 	_reset_touch()
 	mode = "menu"
 	_clear_platforms()
@@ -897,7 +957,9 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	if ad_pending or platform_suspended: return
 	if event is InputEventKey and event.pressed and not event.echo:
 		if event.keycode == KEY_ESCAPE:
-			if mode == "playing":
+			if mode == "tutorial":
+				show_menu()
+			elif mode == "playing":
 				pause_game()
 			elif mode == "paused":
 				resume_game()
@@ -911,7 +973,22 @@ func _notification(what: int) -> void:
 		pause_game()
 
 func _run_mechanics_tests() -> void:
+	tutorial_seen = false
+	_request_start()
+	assert(mode == "tutorial" and ui.tutorial.visible and not hud.visible and not ui.wallet_badge.visible)
+	var before_help: Vector3 = player.position
+	await get_tree().physics_frame
+	assert(player.position == before_help, "Game started behind the instructions")
+	assert(ui.tutorial.heading.position.y + ui.tutorial.heading.size.y <= ui.tutorial.caption.position.y, "Tutorial heading overlaps caption")
+	assert(ui.tutorial.keyboard.position.y + ui.tutorial.keyboard.size.y <= ui.tutorial.start_button.position.y, "Keyboard hint overlaps start")
+	_accept_tutorial()
+	assert(mode == "playing" and tutorial_seen and not ui.tutorial.visible)
+	show_menu()
 	_open_menu_page("characters")
+	await get_tree().process_frame
+	assert(ui.heading.position.y >= ui.back.position.y + ui.back.size.y + 8, "Back button overlaps heading")
+	if portrait and get_viewport().get_visible_rect().size.y >= 600:
+		assert(ui.options.size.y > 230, "Character selector is too short")
 	assert(ui.option_list.get_child_count() == Catalog.CHARACTERS.size())
 	select_character(Catalog.CHARACTERS[1].id)
 	_open_menu_page("maps")
@@ -956,8 +1033,7 @@ func _run_mechanics_tests() -> void:
 	# Exercise real touch-event handling, simultaneous fingers and cancellation.
 	var left: Control = ui.pads[0]
 	var right: Control = ui.pads[1]
-	left.show()
-	right.show()
+	assert(left.is_visible_in_tree() and right.is_visible_in_tree(), "Touch controls depend on a phone breakpoint")
 	var touch := InputEventScreenTouch.new()
 	touch.index = 10
 	touch.position = get_viewport().get_stretch_transform() * left.get_global_rect().get_center()
@@ -966,6 +1042,18 @@ func _run_mechanics_tests() -> void:
 	Input.flush_buffered_events()
 	await get_tree().process_frame
 	assert(touch_left, "Left touch did not hold")
+	var drag := InputEventScreenDrag.new()
+	drag.index = 10
+	drag.position = get_viewport().get_stretch_transform() * right.get_global_rect().get_center()
+	Input.parse_input_event(drag)
+	Input.flush_buffered_events()
+	await get_tree().process_frame
+	assert(not touch_left and touch_right, "Crossing the middle did not switch direction")
+	drag.position = touch.position
+	Input.parse_input_event(drag)
+	Input.flush_buffered_events()
+	await get_tree().process_frame
+	assert(touch_left and not touch_right)
 	var other := InputEventScreenTouch.new()
 	other.index = 11
 	other.position = get_viewport().get_stretch_transform() * right.get_global_rect().get_center()
@@ -983,6 +1071,20 @@ func _run_mechanics_tests() -> void:
 	pause_game()
 	assert(not touch_left and not touch_right)
 	resume_game()
+	assert(left.size.x + right.size.x == get_viewport().get_visible_rect().size.x)
+	assert(left.size.y == get_viewport().get_visible_rect().size.y, "Touch halves do not fill the screen")
+	var button_touch := InputEventScreenTouch.new()
+	button_touch.index = 12
+	button_touch.pressed = true
+	button_touch.position = ui.pause.get_global_rect().get_center()
+	for pad in ui.pads: pad._input(button_touch)
+	assert(not touch_left and not touch_right, "Pause touch steers the player")
+	var blocked_drag := InputEventScreenDrag.new()
+	blocked_drag.index = 12
+	blocked_drag.position = left.get_global_rect().get_center()
+	for pad in ui.pads: pad._input(blocked_drag)
+	assert(not touch_left and not touch_right, "A touch begun on Pause leaked into steering")
+	_reset_touch()
 	_clear_platforms()
 	_add_platform(Vector3.ZERO, 0, false, "spikes")
 	player.position = Vector3(0, 2, 0)
@@ -993,7 +1095,7 @@ func _run_mechanics_tests() -> void:
 		if mode == "gameover": break
 	assert(mode == "gameover" and player.position.y > 0, "Spikes did not end the run")
 	show_menu()
-	print("SKYJUMP_MECHANICS_OK boost moving pause wrap_left wrap_right multitouch cancel spikes catalogs")
+	print("SKYJUMP_MECHANICS_OK boost moving pause wrap_left wrap_right multitouch cancel spikes catalogs tutorial touch_halves cross_middle pause_exclusion")
 
 func _run_currency_tests() -> void:
 	for entry in Catalog.CHARACTERS:
@@ -1118,6 +1220,9 @@ func _run_reward_tests() -> void:
 	assert(menu_page == "home" and wallet.balance == 0)
 	_open_menu_page("records")
 	assert(ui.option_list.get_child_count() == 1 and not player.visible)
+	wallet.record_run("older-lower-score", 10, selected)
+	_open_menu_page("records")
+	assert(ui.option_list.get_child_count() == 1 and wallet.best_score() == 20, "Records must show one all-time best")
 	_open_menu_page("home")
 	assert(player.visible and world.visible)
 	services = saved_services

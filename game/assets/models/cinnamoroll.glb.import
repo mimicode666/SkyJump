@@ -3,13 +3,13 @@
 importer="scene"
 importer_version=1
 type="PackedScene"
-uid="uid://cofia6cuv1nm3"
-path="res://.godot/imported/kirby-blink.glb-b353c7061bf7f0af33f855226c68bb3f.scn"
+uid="uid://bwj76q1jonk76"
+path="res://.godot/imported/cinnamoroll.glb-7da984a11055d45a8d674c9b135233a0.scn"
 
 [deps]
 
-source_file="res://assets/models/kirby-blink.glb"
-dest_files=["res://.godot/imported/kirby-blink.glb-b353c7061bf7f0af33f855226c68bb3f.scn"]
+source_file="res://assets/models/cinnamoroll.glb"
+dest_files=["res://.godot/imported/cinnamoroll.glb-7da984a11055d45a8d674c9b135233a0.scn"]
 
 [params]
 

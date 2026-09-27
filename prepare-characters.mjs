@@ -2,7 +2,7 @@ import {NodeIO} from '@gltf-transform/core';
 import {ALL_EXTENSIONS} from '@gltf-transform/extensions';
 import {dequantize} from '@gltf-transform/functions';
 const io = new NodeIO().registerExtensions(ALL_EXTENSIONS);
-for (const id of (process.argv.slice(2).length ? process.argv.slice(2) : ['kirby-blink','klubnich','manye','pikachu','yablochko','zaichik'])) {
+for (const id of (process.argv.slice(2).length ? process.argv.slice(2) : ['kirby-blink-fixed','cinnamoroll','klubnich','manye','pikachu','yablochko','zaichik'])) {
   const doc = await io.read(`game/source-models/${id}.glb`);
   const count = () => doc.getRoot().listMeshes().reduce((sum, mesh) => sum + mesh.listPrimitives().reduce((n, p) => n + p.getIndices().getCount() / 3, 0), 0);
   const before = count();

@@ -4,6 +4,7 @@ const Rules = preload("res://scripts/jump_rules.gd")
 const Characters = preload("res://scripts/characters.gd")
 const JumpPlatform = preload("res://scripts/jump_platform.gd")
 const Wallet = preload("res://scripts/wallet.gd")
+const PlatformServices = preload("res://scripts/platform_services.gd")
 const Coin = preload("res://scripts/coin.gd")
 const WalletBadge = preload("res://scripts/wallet_badge.gd")
 const Catalog = preload("res://scripts/catalog.gd")
@@ -11,6 +12,13 @@ const TouchDirection = preload("res://scripts/touch_direction.gd")
 const COLORS = [Color("65b333"), Color("efaa25"), Color("935aca")]
 var characters = Characters.new()
 var selected: String = Catalog.CHARACTERS[0].id
+var equipped: String = Catalog.CHARACTERS[0].id
+var services: RefCounted = PlatformServices.new()
+var ad_pending := false
+var revive_used := false
+var run_id := ""
+var bonus_tick := 0.0
+var platform_suspended := false
 var mode: String = "menu"
 var player: Node3D
 var visual: Node3D
@@ -65,14 +73,24 @@ var current_pace := 1.0
 func _ready() -> void:
 	Engine.max_fps = 60
 	automated = "--self-test" in OS.get_cmdline_user_args()
+	services.availability_changed.connect(_platform_available_changed)
+	services.suspension_changed.connect(_platform_suspension_changed)
+	services.initialize(automated)
 	wallet = Wallet.new("user://qa-run-wallet.cfg" if automated else "user://wallet.cfg")
+	wallet.clock = func(): return services.now_seconds()
+	session_best = wallet.best_score()
 	_rng_setup()
 	_setup_world()
 	_setup_ui()
 	select_character(selected)
 	get_window().size_changed.connect(_queue_layout)
 	_resize_ui()
+	await RenderingServer.frame_post_draw
+	if visual != null: services.mark_ready()
 	if automated:
+		if OS.has_feature("web"):
+			assert(services.bridge != null and services.status == "local", "Web platform bridge did not initialize")
+			print("SKYJUMP_PLATFORM_BRIDGE_OK local_no_sdk_requests")
 		print("QA_WALLET_LOADED=", wallet.balance)
 		call_deferred("_run_self_test")
 
@@ -210,8 +228,9 @@ func _collect_coins() -> void:
 			coin_nodes.remove_at(i)
 		elif coin.collect(player.position):
 			coin_nodes.remove_at(i)
-			run_coins += 1
-			wallet.earn()
+			var amount: int = wallet.coin_multiplier()
+			run_coins += amount
+			wallet.earn(amount)
 			_update_wallet_labels()
 
 func _update_wallet_labels() -> void:
@@ -245,6 +264,11 @@ func _setup_ui() -> void:
 	style.shadow_color = Color(0.23, 0.46, 0.58, 0.15)
 	style.shadow_size = 7
 	theme.set_stylebox("normal", "Button", style)
+	var disabled := style.duplicate()
+	disabled.bg_color = Color("dceaf0")
+	disabled.shadow_size = 0
+	theme.set_stylebox("disabled", "Button", disabled)
+	theme.set_color("font_disabled_color", "Button", Color("526c7c"))
 	var hover := style.duplicate()
 	hover.bg_color = Color("e8f6ff")
 	theme.set_stylebox("hover", "Button", hover)
@@ -273,6 +297,9 @@ func _setup_ui() -> void:
 	var title := _label("ПРЫЖОК В ОБЛАКА", 16)
 	title.position = Vector2(46, 28)
 	menu.add_child(title)
+	var back_button := _button("‹ В меню", func(): _open_menu_page("home"))
+	back_button.add_theme_font_size_override("font_size", 15)
+	menu.add_child(back_button)
 	var heading := _label("SkyJump", 44)
 	heading.position = Vector2(46, 56)
 	menu.add_child(heading)
@@ -302,14 +329,21 @@ func _setup_ui() -> void:
 	menu_bottom.position = Vector2(48, -160)
 	menu_bottom.add_theme_constant_override("separation", 15)
 	menu.add_child(menu_bottom)
-	play_button = _button("Прыгать!", func():
-		if menu_page == "home": start_game()
-		else: _open_menu_page("home"))
+	play_button = _button("Прыгать!", _menu_action)
 	play_button.custom_minimum_size = Vector2(240, 60)
 	menu_bottom.add_child(play_button)
 	var menu_hint := _label("", 16)
 	menu_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	menu_bottom.add_child(menu_hint)
+	var actions := HBoxContainer.new()
+	actions.add_theme_constant_override("separation", 10)
+	menu.add_child(actions)
+	var bonus_button := _button("", _request_double_coins)
+	var leaders_button := _button("Рекорды", func(): _open_menu_page("records"))
+	for button in [bonus_button, leaders_button]:
+		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		button.add_theme_font_size_override("font_size", 16)
+		actions.add_child(button)
 	hud = Control.new()
 	hud.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	hud.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -359,19 +393,35 @@ func _setup_ui() -> void:
 	column.add_child(overlay_text)
 	resume_button = _button("Продолжить", resume_game)
 	column.add_child(resume_button)
+	var continue_button := _button("", _request_continue)
+	continue_button.add_theme_font_size_override("font_size", 17)
+	column.add_child(continue_button)
 	column.add_child(_button("Ещё раз", start_game))
 	column.add_child(_button("Главное меню", show_menu))
 	# Above every menu/scroll list, so the balance cannot be covered by cards.
 	var wallet_badge := WalletBadge.new()
 	root.add_child(wallet_badge)
+	var ad_cover := ColorRect.new()
+	ad_cover.color = Color(0.83, 0.93, 0.98, 0.94)
+	ad_cover.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	root.add_child(ad_cover)
+	var ad_label := _label("Подождите…", 24)
+	ad_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	ad_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	ad_label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	ad_cover.add_child(ad_label)
 	ui = {"title": title, "heading": heading, "subtitle": subtitle, "pickers": pickers,
+		"back": back_button,
+		"ad_cover": ad_cover, "ad_label": ad_label,
 		"bottom": menu_bottom, "menu_hint": menu_hint, "pause": pause_button,
+		"actions": actions, "bonus": bonus_button, "continue": continue_button,
 		"hint": hint, "column": column, "pads": touch_pads,
 		"wallet_badge": wallet_badge, "character_choice": character_choice, "map_choice": map_choice, "options": options, "option_list": option_list}
 	hud.hide()
 	overlay.hide()
 	_open_menu_page("home")
 	_update_wallet_labels()
+	_sync_platform_state()
 
 func _queue_layout() -> void:
 	if not layout_pending:
@@ -402,12 +452,19 @@ func _resize_ui() -> void:
 	ui.character_choice.add_theme_font_size_override("font_size", 17 if compact else 20)
 	_place(ui.wallet_badge, Vector2(area.x - margin - 164, 16 if compact else 24) if mode == "menu" else Vector2(margin, 91 if compact else 104), Vector2(164, 34))
 	_place(ui.title, Vector2(margin, 16 if short_landscape else 24), Vector2(menu_width, 24))
+	ui.title.visible = menu_page == "home"
+	ui.back.visible = menu_page != "home"
+	_place(ui.back, Vector2(margin, 16 if compact else 24), Vector2(124, 34))
 	ui.heading.add_theme_font_size_override("font_size", 30 if compact else 44)
 	_place(ui.heading, Vector2(margin, 44 if short_landscape else 53), Vector2(menu_width, 52))
 	ui.subtitle.text = "Выберите героя и отправляйтесь в небо" if menu_page == "home" else ("Нажмите, чтобы выбрать героя" if menu_page == "characters" else "Нажмите, чтобы сменить фон")
+	if menu_page == "records": ui.subtitle.text = "Ваши лучшие забеги на этом устройстве\nОнлайн-таблица появится позже"
 	ui.subtitle.add_theme_font_size_override("font_size", 16 if compact else 20)
 	ui.subtitle.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_place(ui.subtitle, Vector2(margin, 90 if short_landscape else (98 if compact else 117)), Vector2(menu_width, 42))
+	if short_landscape and menu_page != "home":
+		ui.heading.position.y += 14
+		ui.subtitle.position.y += 11
 	_place(ui.pickers, Vector2(margin, 148 if short_landscape else (159 if compact else 195)), Vector2(menu_width, 120))
 	for button in [ui.character_choice, ui.map_choice]:
 		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -419,11 +476,15 @@ func _resize_ui() -> void:
 	play_button.custom_minimum_size = Vector2(0, 58)
 	ui.bottom.add_theme_constant_override("separation", 8 if compact else 15)
 	ui.menu_hint.add_theme_font_size_override("font_size", 14 if compact and not portrait else 16)
-	ui.menu_hint.text = ("Удерживайте кнопки внизу экрана\nПрыжки — автоматически" if touch_controls else "A / D или стрелки — движение\nПрыжки — автоматически") if menu_page == "home" else "Выбор сохранён для следующего прыжка"
+	ui.menu_hint.text = ("Удерживайте кнопки внизу экрана\nПрыжки — автоматически" if touch_controls else "A / D или стрелки — движение\nПрыжки — автоматически") if menu_page == "home" else ("Нажмите на героя для просмотра" if menu_page == "characters" else "")
 	ui.pickers.visible = menu_page == "home"
+	ui.actions.visible = menu_page == "home"
+	_place(ui.actions, Vector2(margin, ui.bottom.position.y - 88) if portrait else Vector2(area.x * 0.55, area.y - 86), Vector2(menu_width if portrait else area.x * 0.45 - margin, 72))
 	ui.options.visible = menu_page != "home"
 	var options_y: float = area.y - bottom_height - 150 if portrait else 166.0
+	if menu_page == "records": options_y = 164.0
 	_place(ui.options, Vector2(margin, options_y), Vector2(menu_width, 132 if portrait else maxf(100, area.y - bottom_height - options_y - 18)))
+	if menu_page == "records": ui.options.size.y = ui.bottom.position.y - options_y - 18
 	_place(score_label, Vector2(margin, 20), Vector2(180, 48))
 	score_label.add_theme_font_size_override("font_size", 34 if compact else 42)
 	_place(record_label, Vector2(margin, 65 if compact else 78), Vector2(180, 24))
@@ -472,7 +533,9 @@ func _set_touch(side: int, pressed: bool) -> void:
 		touch_right = pressed
 
 func select_character(id: String) -> void:
+	if Catalog.character(id).is_empty(): return
 	selected = id
+	if wallet.owns_character(id): equipped = id
 	if visual != null:
 		player.remove_child(visual)
 		visual.queue_free()
@@ -496,17 +559,54 @@ func _update_choice_labels() -> void:
 		if entry.id == selected_map:
 			ui.map_choice.text = "Карта: " + entry.name
 	for button in ui.option_list.get_children():
+		if not button is Button: continue
 		button.set_pressed_no_signal(button.get_meta("choice") == (selected if menu_page == "characters" else selected_map))
+		if menu_page == "characters":
+			var entry := Catalog.character(button.get_meta("choice"))
+			var status: String = " · доступен" if entry.price == 0 else (" · куплен" if wallet.owns_character(entry.id) else "")
+			button.text = "%s\n%d монет%s" % [entry.name, entry.price, status]
+	play_button.disabled = false
+	play_button.text = "Прыгать!" if menu_page == "home" else "В меню"
+	if menu_page == "characters":
+		var entry := Catalog.character(selected)
+		if wallet.owns_character(selected): play_button.text = "Выбрать"
+		else:
+			play_button.disabled = wallet.balance < entry.price
+			play_button.text = "Не хватает %d монет" % (entry.price - wallet.balance) if play_button.disabled else "Купить за %d монет" % entry.price
+	if visual == null: play_button.disabled = true
+	_update_reward_buttons()
+
+func _menu_action() -> void:
+	if ad_pending: return
+	if menu_page == "home": start_game()
+	elif menu_page == "characters" and not wallet.owns_character(selected):
+		if wallet.purchase_character(selected): equipped = selected
+		_update_wallet_labels()
+		_update_choice_labels()
+	else: _open_menu_page("home")
 
 func _open_menu_page(page: String) -> void:
 	menu_page = page
+	if page == "home" and not wallet.owns_character(selected): select_character(equipped)
+	player.visible = page != "records"
+	world.visible = page != "records"
 	ui.title.text = "ПРЫЖОК В ОБЛАКА" if page == "home" else "SkyJump"
 	ui.heading.text = "SkyJump" if page == "home" else ("Персонажи" if page == "characters" else "Карты")
+	if page == "records": ui.heading.text = "Рекорды"
 	play_button.text = "Прыгать!" if page == "home" else "Готово"
 	for child in ui.option_list.get_children():
 		ui.option_list.remove_child(child)
 		child.queue_free()
-	if page != "home":
+	if page == "records":
+		if wallet.records.is_empty():
+			var empty := _label("Пока нет результатов.\nПора прыгнуть!", 20)
+			ui.option_list.add_child(empty)
+		for i in range(wallet.records.size()):
+			var record: Dictionary = wallet.records[i]
+			var row := _label("%02d   ·   %d м\n%s" % [i + 1, record.score, Catalog.character(record.character).name], 19)
+			row.custom_minimum_size.y = 68
+			ui.option_list.add_child(row)
+	elif page in ["characters", "maps"]:
 		for entry in (Catalog.CHARACTERS if page == "characters" else Catalog.MAPS):
 			var id: String = entry.id
 			var button := _button(entry.name, func():
@@ -514,11 +614,12 @@ func _open_menu_page(page: String) -> void:
 				else: select_map(id)
 				_update_choice_labels())
 			button.toggle_mode = true
-			button.custom_minimum_size.y = 54
-			button.add_theme_font_size_override("font_size", 18)
+			button.custom_minimum_size.y = 66 if page == "characters" else 54
+			button.add_theme_font_size_override("font_size", 17)
 			button.set_meta("choice", id)
 			ui.option_list.add_child(button)
 	_update_choice_labels()
+	ui.options.scroll_vertical = 0
 	_resize_ui()
 
 func select_map(id: String) -> void:
@@ -533,6 +634,12 @@ func select_map(id: String) -> void:
 	_update_choice_labels()
 
 func start_game() -> void:
+	if ad_pending or platform_suspended: return
+	if not wallet.owns_character(selected): selected = equipped
+	player.show()
+	world.show()
+	revive_used = false
+	run_id = "%s-%d" % [str(Time.get_unix_time_from_system()), Time.get_ticks_usec()]
 	mode = "playing"
 	_reset_touch()
 	_clear_platforms()
@@ -563,9 +670,10 @@ func start_game() -> void:
 	score_label.text = "0 м"
 	record_label.text = "Рекорд: %d м" % session_best
 	_resize_ui()
+	_sync_platform_state()
 
 func _physics_process(delta: float) -> void:
-	if mode != "playing":
+	if mode != "playing" or platform_suspended or ad_pending:
 		return
 	run_seconds += delta
 	current_pace = Rules.pace(highest, run_seconds)
@@ -611,6 +719,11 @@ func _physics_process(delta: float) -> void:
 		finish_game()
 
 func _process(delta: float) -> void:
+	bonus_tick += delta
+	if bonus_tick >= 1.0:
+		bonus_tick = 0.0
+		_update_reward_buttons()
+	if platform_suspended or ad_pending: return
 	if mode == "menu" and visual != null:
 		visual.rotation.y = sin(Time.get_ticks_msec() * 0.00045) * 0.22
 	if mode == "playing" and visual != null:
@@ -637,10 +750,13 @@ func _process(delta: float) -> void:
 
 func _update_camera(delta: float) -> void:
 	var target_y: float = 1.5 if mode == "menu" else camera_height
+	if mode == "menu": player.scale = Vector3.ONE
 	if mode == "menu" and portrait and not ui.is_empty():
 		var area := Vector2(get_window().content_scale_size)
-		var model_center: float = (287.0 + ui.bottom.position.y) * 0.5 if menu_page == "home" else (158.0 + ui.options.position.y) * 0.5
-		target_y = 1.65 + (model_center - area.y * 0.5) * 7.2 / area.x
+		var model_center: float = (287.0 + ui.actions.position.y) * 0.5 if menu_page == "home" else (158.0 + ui.options.position.y) * 0.5
+		var preview_scale: float = clampf((ui.actions.position.y - 287.0) / 250.0, 0.72, 1.0) if menu_page == "home" else 1.0
+		player.scale = Vector3.ONE * preview_scale
+		target_y = 1.65 * preview_scale + (model_center - area.y * 0.5) * 7.2 / area.x
 	var target_x: float = (1.5 if portrait else -0.7) if mode == "menu" else 0.0
 	var desired := Vector3(target_x, target_y + 4.0, 13)
 	camera.position = camera.position.lerp(desired, minf(delta * 7.0, 1.0))
@@ -650,6 +766,79 @@ func _update_camera(delta: float) -> void:
 
 func _fall_height() -> float:
 	return camera_height - 7.0
+
+func _platform_available_changed() -> void:
+	# Russian is the only declared language for this MVP; other locales fall back.
+	TranslationServer.set_locale(services.language if services.language in ["ru"] else "ru")
+	_update_reward_buttons()
+
+func _platform_suspension_changed(suspended: bool) -> void:
+	platform_suspended = suspended
+	_reset_touch()
+	_sync_platform_state()
+
+func _sync_platform_state() -> void:
+	services.set_gameplay(mode == "playing" and not platform_suspended and not ad_pending)
+	AudioServer.set_bus_mute(0, platform_suspended or ad_pending or mode == "paused")
+	if ui.is_empty(): return
+	ui.ad_cover.visible = ad_pending or platform_suspended
+	ui.ad_label.text = "Просмотр рекламы…" if ad_pending else "Пауза\nВернитесь в игру"
+	for pad in ui.pads: pad.visible = touch_controls and mode == "playing" and not platform_suspended and not ad_pending
+
+func _update_reward_buttons() -> void:
+	if ui.is_empty(): return
+	var remaining: int = wallet.double_remaining()
+	var available: bool = services.is_rewarded_available()
+	ui.bonus.disabled = ad_pending or remaining > 0 or not available
+	ui.bonus.text = "×2 · %02d:%02d" % [remaining / 60, remaining % 60] if remaining > 0 else ("×2 на 10 минут\nЗа рекламу" if available else "Монеты ×2\nНедоступно")
+	ui.continue.visible = mode == "gameover" and not revive_used
+	ui.continue.disabled = ad_pending or not available
+	ui.continue.text = "Продолжить за рекламу" if available else "Продолжить за рекламу\nНедоступно"
+	if ad_pending:
+		ui.bonus.disabled = true
+		ui.bonus.text = "Ожидаем просмотр…"
+		ui.continue.text = "Ожидаем просмотр…"
+
+func _request_double_coins() -> void:
+	if mode != "menu" or platform_suspended or ad_pending or wallet.double_remaining() > 0 or not services.is_rewarded_available(): return
+	ad_pending = true
+	_sync_platform_state()
+	_update_reward_buttons()
+	var rewarded: bool = await services.request_rewarded("double_coins")
+	ad_pending = false
+	if rewarded: wallet.activate_double_coins()
+	else: ui.menu_hint.text = "Награда не получена. Попробуйте ещё."
+	_sync_platform_state()
+	_update_reward_buttons()
+
+func _request_continue() -> void:
+	if mode != "gameover" or platform_suspended or revive_used or ad_pending or not services.is_rewarded_available(): return
+	ad_pending = true
+	_sync_platform_state()
+	var request_run := run_id
+	_update_reward_buttons()
+	var rewarded: bool = await services.request_rewarded("continue")
+	ad_pending = false
+	if rewarded and mode == "gameover" and run_id == request_run and not revive_used: _revive()
+	elif not rewarded: overlay_text.text = "Высота: %d м\nНаграда не получена.\nПопробуйте ещё." % int(highest * 10)
+	_sync_platform_state()
+	_update_reward_buttons()
+
+func _revive() -> void:
+	revive_used = true
+	# Resume on a safe existing platform without resetting this run or its coins.
+	var safe := Vector3.INF
+	for platform in platform_nodes:
+		if platform.active and platform.kind != "spikes" and platform.position.y <= highest and platform.position.y > _fall_height() + 1.0:
+			if not safe.is_finite() or platform.position.y > safe.y: safe = platform.position
+	if not safe.is_finite():
+		safe = Vector3(0, highest, 0)
+		_add_platform(safe, generated_count)
+	player.position = safe + Vector3(0, 0.05, 0)
+	player.scale = Vector3.ONE
+	velocity = Vector2(0, Rules.JUMP_SPEED)
+	_reset_touch()
+	resume_game()
 
 func _wrap_half_width() -> float:
 	var area := get_viewport().get_visible_rect().size
@@ -664,25 +853,33 @@ func pause_game() -> void:
 	overlay_title.text = "Передохнём?"
 	overlay_text.text = "Высота: %d м" % int(highest * 10)
 	resume_button.show()
+	ui.continue.hide()
 	overlay.show()
 	resume_button.grab_focus()
+	_sync_platform_state()
 
 func resume_game() -> void:
+	if ad_pending: return
 	mode = "playing"
 	for pad in ui.pads: pad.visible = touch_controls
 	overlay.hide()
+	_sync_platform_state()
 
 func finish_game() -> void:
 	_reset_touch()
 	for pad in ui.pads: pad.hide()
 	mode = "gameover"
 	session_best = maxi(session_best, int(highest * 10))
+	wallet.record_run(run_id, int(highest * 10), selected)
 	overlay_title.text = "Ещё один прыжок?"
 	overlay_text.text = "Высота: %d м\nРекорд: %d м\nСобрано монет: %d" % [int(highest * 10), session_best, run_coins]
 	resume_button.hide()
+	_update_reward_buttons()
 	overlay.show()
+	_sync_platform_state()
 
 func show_menu() -> void:
+	if ad_pending: return
 	_reset_touch()
 	mode = "menu"
 	_clear_platforms()
@@ -694,8 +891,10 @@ func show_menu() -> void:
 	menu.show()
 	hud.hide()
 	overlay.hide()
+	_sync_platform_state()
 
 func _unhandled_key_input(event: InputEvent) -> void:
+	if ad_pending or platform_suspended: return
 	if event is InputEventKey and event.pressed and not event.echo:
 		if event.keycode == KEY_ESCAPE:
 			if mode == "playing":
@@ -708,7 +907,7 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			start_game()
 
 func _notification(what: int) -> void:
-	if what == NOTIFICATION_APPLICATION_FOCUS_OUT and mode == "playing" and not automated:
+	if what == NOTIFICATION_APPLICATION_FOCUS_OUT and mode == "playing" and not automated and (not OS.has_feature("web") or services.bridge == null):
 		pause_game()
 
 func _run_mechanics_tests() -> void:
@@ -804,7 +1003,7 @@ func _run_currency_tests() -> void:
 		await RenderingServer.frame_post_draw
 		if not OS.has_feature("web"):
 			get_viewport().get_texture().get_image().save_png("res://../qa/character-" + entry.id + ".png")
-		if entry.id == "kirby":
+		if entry.id in ["kirby", "cinnamoroll"]:
 			var animation_players: Array[Node] = visual.find_children("*", "AnimationPlayer", true, false)
 			assert(not animation_players.is_empty(), "Kirby blink animation missing")
 			var animation_player: AnimationPlayer = animation_players[0]
@@ -813,11 +1012,21 @@ func _run_currency_tests() -> void:
 			for mesh in visual.find_children("*", "MeshInstance3D", true, false):
 				if mesh.get_blend_shape_count() > 0: face = mesh
 			assert(face != null, "Kirby blink shape missing")
-			animation_player.seek(1.85, true)
-			assert(face.get_blend_shape_value(0) > 0.9, "Kirby did not close his eyes")
+			# Sample the supplied timeline: the two models blink at different times.
+			var blink_animation := animation_player.get_animation(animation_player.current_animation)
+			var closed_time := 0.0
+			var max_weight := 0.0
+			for sample in range(131):
+				var sample_time: float = blink_animation.length * sample / 130.0
+				animation_player.seek(sample_time, true)
+				if face.get_blend_shape_value(0) > max_weight:
+					max_weight = face.get_blend_shape_value(0)
+					closed_time = sample_time
+			assert(max_weight > 0.9, "Blink did not close eyes: " + entry.id)
+			animation_player.seek(closed_time, true)
 			await RenderingServer.frame_post_draw
 			if not OS.has_feature("web"):
-				get_viewport().get_texture().get_image().save_png("res://../qa/kirby-blink-closed.png")
+				get_viewport().get_texture().get_image().save_png("res://../qa/" + entry.id + "-blink-closed.png")
 			animation_player.seek(0.0, true)
 			assert(face.get_blend_shape_value(0) < 0.05, "Kirby did not reopen his eyes")
 	_open_menu_page("characters")
@@ -845,11 +1054,103 @@ func _run_currency_tests() -> void:
 	assert(malformed.save("user://qa-invalid-wallet.cfg") == OK)
 	var safe_wallet := Wallet.new("user://qa-invalid-wallet.cfg")
 	assert(safe_wallet.balance == 0)
-	DirAccess.remove_absolute("user://qa-invalid-wallet.cfg")
+	Wallet.clear_profile("user://qa-invalid-wallet.cfg")
 	show_menu()
 	print("SKYJUMP_CURRENCY_OK characters=", Catalog.CHARACTERS.size(), " one_pickup save_reload restart invalid_save")
 
+func _run_reward_tests() -> void:
+	var saved_wallet: RefCounted = wallet
+	var saved_services: RefCounted = services
+	var saved_best := session_best
+	Wallet.clear_profile("user://qa-rewards-wallet.cfg")
+	wallet = Wallet.new("user://qa-rewards-wallet.cfg")
+	show_menu()
+	assert(ui.bonus.disabled)
+	await _request_double_coins()
+	assert(wallet.coin_multiplier() == 1, "Unavailable ad granted reward")
+	var fake: RefCounted = load("res://tests/reward_stub.gd").new()
+	services = fake
+	await _request_double_coins()
+	assert(wallet.coin_multiplier() == 1, "Cancelled ad granted reward")
+	fake.success = true
+	await _request_double_coins()
+	assert(wallet.coin_multiplier() == 2)
+	var calls: int = fake.calls
+	await _request_double_coins()
+	assert(fake.calls == calls, "Active bonus allowed duplicate ad")
+	select_character("kirby")
+	start_game()
+	assert(selected == equipped and selected != "kirby", "Locked character can play")
+	_clear_platforms()
+	_add_platform(Vector3.ZERO, 0)
+	_spawn_coin(platform_nodes[0])
+	player.position = Vector3.ZERO
+	_collect_coins()
+	_collect_coins()
+	assert(run_coins == 2 and wallet.balance == 2, "Timed bonus did not double one pickup")
+	highest = 1.0
+	finish_game()
+	fake.success = false
+	await _request_continue()
+	assert(mode == "gameover" and not revive_used)
+	fake.success = true
+	# A spike closer to the peak must never be chosen as a revival platform.
+	_add_platform(Vector3(2, 0.5, 0), 1, false, "spikes")
+	await _request_continue()
+	assert(mode == "playing" and revive_used and player.position.x == 0)
+	assert(run_coins == 2 and highest == 1.0 and is_equal_approx(velocity.y, Rules.JUMP_SPEED))
+	highest = 2.0
+	finish_game()
+	calls = fake.calls
+	await _request_continue()
+	assert(mode == "gameover" and fake.calls == calls and not ui.continue.visible)
+	assert(wallet.records.size() == 1 and wallet.best_score() == 20)
+	show_menu()
+	_open_menu_page("characters")
+	select_character("zaichik")
+	assert(play_button.disabled and "48" in play_button.text)
+	wallet.earn(48)
+	_update_choice_labels()
+	assert(not play_button.disabled and "50" in play_button.text)
+	_menu_action()
+	assert(wallet.balance == 0 and wallet.owns_character("zaichik") and equipped == "zaichik")
+	_menu_action()
+	assert(menu_page == "home" and wallet.balance == 0)
+	_open_menu_page("records")
+	assert(ui.option_list.get_child_count() == 1 and not player.visible)
+	_open_menu_page("home")
+	assert(player.visible and world.visible)
+	services = saved_services
+	wallet = saved_wallet
+	session_best = saved_best
+	equipped = Catalog.CHARACTERS[0].id
+	selected = equipped
+	Wallet.clear_profile("user://qa-rewards-wallet.cfg")
+	show_menu()
+	_update_wallet_labels()
+	print("SKYJUMP_REWARDS_OK unavailable cancelled confirmed once revive_safe doubled_pickup locked_skin")
+
+func _run_platform_tests() -> void:
+	start_game()
+	var frozen := player.position
+	_platform_suspension_changed(true)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	assert(player.position.is_equal_approx(frozen) and mode == "playing")
+	assert(ui.ad_cover.visible and AudioServer.is_bus_mute(0))
+	_platform_suspension_changed(false)
+	assert(not ui.ad_cover.visible and not AudioServer.is_bus_mute(0))
+	pause_game()
+	_platform_suspension_changed(true)
+	_platform_suspension_changed(false)
+	assert(mode == "paused" and AudioServer.is_bus_mute(0), "SDK resumed manual pause")
+	show_menu()
+	print("SKYJUMP_PLATFORM_PAUSE_OK physics input_block sound manual_pause")
+
 func _run_self_test() -> void:
+	load("res://tests/progression_checks.gd").run()
+	await _run_platform_tests()
+	await _run_reward_tests()
 	await _run_mechanics_tests()
 	await _run_currency_tests()
 	var test_rng := RandomNumberGenerator.new()

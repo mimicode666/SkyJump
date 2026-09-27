@@ -2,19 +2,19 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://mei5ttebvmbt"
-path="res://.godot/imported/kirby-blink_Image_2.webp-80f02968927f85ba105fbd6b1c8bfac5.ctex"
+uid="uid://cd2qnx1x62x6w"
+path="res://.godot/imported/kirby-blink-fixed_Image_0.webp-8ae21b96a1ffcd5219311a0e671ac1cb.ctex"
 metadata={
 "vram_texture": false
 }
 generator_parameters={
-"md5": "51da6a58cbf50a9257867c319f7f607f"
+"md5": "0e8e5a0635cb018692d9a8dc39d32281"
 }
 
 [deps]
 
-source_file="res://assets/models/kirby-blink_Image_2.webp"
-dest_files=["res://.godot/imported/kirby-blink_Image_2.webp-80f02968927f85ba105fbd6b1c8bfac5.ctex"]
+source_file="res://assets/models/kirby-blink-fixed_Image_0.webp"
+dest_files=["res://.godot/imported/kirby-blink-fixed_Image_0.webp-8ae21b96a1ffcd5219311a0e671ac1cb.ctex"]
 
 [params]
 

@@ -8,6 +8,7 @@ const ACCELERATION: float = 58.0
 const HALF_WIDTH: float = 4.6
 const PLATFORM_RADIUS: float = 0.78
 const FOOT_RADIUS: float = 0.14
+const LANDING_MARGIN: float = 0.05
 const MIN_HEIGHT_STEP: float = 2.1
 const MAX_HEIGHT_STEP: float = 2.6
 const SPAWN_AHEAD: float = 24.0
@@ -22,7 +23,7 @@ static func wrap_x(x: float, half_width: float) -> float:
 	return wrapf(x, -half_width, half_width)
 
 static func lands(previous_y: float, next_y: float, velocity_y: float, player_x: float, platform: Vector3) -> bool:
-	return velocity_y <= 0.0 and previous_y >= platform.y and next_y <= platform.y and absf(player_x - platform.x) <= PLATFORM_RADIUS + FOOT_RADIUS
+	return velocity_y <= 0.0 and previous_y >= platform.y and next_y <= platform.y and absf(player_x - platform.x) <= PLATFORM_RADIUS + FOOT_RADIUS + LANDING_MARGIN
 
 static func next_platform(previous: Vector3, rng: RandomNumberGenerator, before_previous: Vector3 = Vector3.INF) -> Vector3:
 	var difficulty: float = clampf(previous.y / 35.0, 0.0, 1.0)

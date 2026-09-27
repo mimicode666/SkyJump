@@ -2,19 +2,19 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://d1jrd0oe1uy4e"
-path="res://.godot/imported/kirby-blink_Image_1.webp-77ae0caafe5888754418c2a11b4079ad.ctex"
+uid="uid://b6266q713hn4s"
+path="res://.godot/imported/kirby-blink-fixed_Kirby closed eyelids.png-10c772d8664a7f046cd6556b8fd163c2.ctex"
 metadata={
 "vram_texture": false
 }
 generator_parameters={
-"md5": "24afa09a43792d8d12f2c209e7c077c1"
+"md5": "d127e872c925d32ac52316bbb1343792"
 }
 
 [deps]
 
-source_file="res://assets/models/kirby-blink_Image_1.webp"
-dest_files=["res://.godot/imported/kirby-blink_Image_1.webp-77ae0caafe5888754418c2a11b4079ad.ctex"]
+source_file="res://assets/models/kirby-blink-fixed_Kirby closed eyelids.png"
+dest_files=["res://.godot/imported/kirby-blink-fixed_Kirby closed eyelids.png-10c772d8664a7f046cd6556b8fd163c2.ctex"]
 
 [params]
 

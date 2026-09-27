@@ -3,6 +3,9 @@ const Rules = preload("res://scripts/jump_rules.gd")
 const Platform = preload("res://scripts/jump_platform.gd")
 
 func _initialize() -> void:
+	var old_edge: float = Rules.PLATFORM_RADIUS + Rules.FOOT_RADIUS
+	if not _check(Rules.lands(0.1, -0.1, -1.0, old_edge + 0.04, Vector3.ZERO), "Extra landing margin missing"): return
+	if not _check(not Rules.lands(0.1, -0.1, -1.0, old_edge + 0.06, Vector3.ZERO), "Landing margin too large"): return
 	var checked: int = 0
 	var lowest_gap: float = INF
 	var highest_gap: float = 0.0

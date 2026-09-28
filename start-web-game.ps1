@@ -4,7 +4,7 @@ $siteUrl = 'http://127.0.0.1:4174/'
 function Test-SkyJump {
     try {
         $page = Invoke-WebRequest -Uri $siteUrl -UseBasicParsing -TimeoutSec 2
-        if ($page.Headers['X-SkyJump'] -ne 'godot-web') { throw 'Port 4174 is used by another application.' }
+        if (-not $page.Headers['X-SkyJump']) { throw 'Port 4174 is used by another application.' }
         return $true
     } catch [System.Net.WebException] { return $false }
 }

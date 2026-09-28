@@ -1,16 +1,16 @@
 param([switch]$NoBrowser)
 $ErrorActionPreference = 'Stop'
 $siteUrl = 'http://127.0.0.1:4174/'
-function Test-PlayerTwo {
+function Test-SkyJump {
     try {
         $page = Invoke-WebRequest -Uri $siteUrl -UseBasicParsing -TimeoutSec 2
-        if ($page.Headers['X-Player-Two'] -ne 'godot-web') { throw 'Port 4174 is used by another application.' }
+        if ($page.Headers['X-SkyJump'] -ne 'godot-web') { throw 'Port 4174 is used by another application.' }
         return $true
     } catch [System.Net.WebException] { return $false }
 }
 try {
-    if (-not (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'build/web/index.html'))) { throw 'Web build is missing. Export the Web preset in Godot first (see game/WEB.md).' }
-    if (-not (Test-PlayerTwo)) {
+    if (-not (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'build/web/index.html'))) { throw 'This folder contains source code. Download the ready game: https://github.com/mimicode666/SkyJump/releases/latest (no Godot needed).' }
+    if (-not (Test-SkyJump)) {
         $nodeCommand = Get-Command node.exe -ErrorAction SilentlyContinue
         $nodePath = if ($nodeCommand) { $nodeCommand.Source } else { Join-Path $env:USERPROFILE '.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe' }
         if (-not (Test-Path -LiteralPath $nodePath)) { throw 'Node.js was not found. Install Node.js, then run this file again.' }
@@ -21,7 +21,7 @@ try {
         $ready = $false
         for ($attempt = 0; $attempt -lt 20; $attempt++) {
             Start-Sleep -Milliseconds 250
-            if (Test-PlayerTwo) { $ready = $true; break }
+            if (Test-SkyJump) { $ready = $true; break }
             if ($process.HasExited) { break }
         }
         if (-not $ready) { throw "Server failed to start. See $logDir\web-game-error.log" }

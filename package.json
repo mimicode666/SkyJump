@@ -1,1 +1,17 @@
-{"name":"skyjump","version":"0.5.0","private":true,"type":"module","scripts":{"start":"node server-game.mjs","prepare:characters":"node prepare-characters.mjs","test:sdk":"node --test game/tests/yandex_bridge_test.mjs"},"devDependencies":{"@gltf-transform/core":"^4.5.0","@gltf-transform/extensions":"^4.5.0","@gltf-transform/functions":"^4.5.0","meshoptimizer":"^1.2.0"}}
+{
+  "name": "skyjump",
+  "version": "0.6.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server-game.mjs",
+    "prepare:characters": "node prepare-characters.mjs",
+    "test:sdk": "node --test game/tests/yandex_bridge_test.mjs"
+  },
+  "devDependencies": {
+    "@gltf-transform/core": "^4.5.0",
+    "@gltf-transform/extensions": "^4.5.0",
+    "@gltf-transform/functions": "^4.5.0",
+    "meshoptimizer": "^1.2.0"
+  }
+}

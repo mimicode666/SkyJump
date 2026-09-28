@@ -15,7 +15,7 @@ const server = http.createServer((req, res) => {
   if (relative.startsWith('..') || path.isAbsolute(relative) || pathname.includes('\\')) { res.writeHead(403); return res.end(); }
   fs.stat(file, (err, stat) => {
     if (err || !stat.isFile()) { res.writeHead(404); return res.end('Web build file not found.'); }
-    res.writeHead(200, {'Content-Type':types[path.extname(file)] || 'application/octet-stream', 'Content-Length':stat.size, 'Cache-Control':'no-cache', 'X-Content-Type-Options':'nosniff', 'X-Player-Two':'godot-web'});
+    res.writeHead(200, {'Content-Type':types[path.extname(file)] || 'application/octet-stream', 'Content-Length':stat.size, 'Cache-Control':'no-cache', 'X-Content-Type-Options':'nosniff', 'X-SkyJump':'godot-web'});
     if (req.method === 'HEAD') return res.end();
     const stream = fs.createReadStream(file);
     stream.on('error', () => res.destroy());

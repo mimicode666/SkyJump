@@ -12,4 +12,4 @@ if (-not (Test-Path -LiteralPath (Join-Path $project '.godot\imported'))) {
 $arguments = '--path "' + $project + '" --log-file "' + (Join-Path $logDir 'game.log') + '"'
 if ($Editor) { $arguments += ' --editor' }
 $gameProcess = Start-Process -FilePath $engine -ArgumentList $arguments -WorkingDirectory $project -PassThru
-Write-Output ('PLAYER TWO process: ' + $gameProcess.Id)
+Write-Output ('SkyJump process: ' + $gameProcess.Id)

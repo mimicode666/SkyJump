@@ -7,6 +7,7 @@ var kind: String = "normal"
 var origin_x: float = 0.0
 var motion_time: float = 0.0
 var motion_amplitude: float = 0.0
+var motion_speed: float = 1.55
 var hits: int = 0
 var active: bool = true
 var parts: Array[MeshInstance3D] = []
@@ -22,12 +23,13 @@ var springs: Array[MeshInstance3D] = []
 var crumbs: Array[MeshInstance3D] = []
 var surface_color: Color
 
-func configure(color: Color, is_stone: bool = false, type_id: String = "normal") -> void:
+func configure(color: Color, is_stone: bool = false, type_id: String = "normal", speed: float = 1.55) -> void:
 	add_child(artwork)
 	stone = is_stone
 	kind = "stone" if stone else type_id
 	origin_x = position.x
 	motion_time = position.y * 1.7
+	motion_speed = clampf(speed, Rules.MOVING_MIN_SPEED, Rules.MOVING_MAX_SPEED * Journey.MOTION_MULTIPLIERS[Journey.Zone.GALAXIES])
 	motion_amplitude = minf(0.7, maxf(0.0, Rules.HALF_WIDTH - Rules.PLATFORM_RADIUS - absf(origin_x)))
 	var base_color: Color = Color("85919f") if stone else color
 	if kind == "moving":
@@ -96,12 +98,12 @@ func configure(color: Color, is_stone: bool = false, type_id: String = "normal")
 func apply_environment(height: float) -> void:
 	var theme := Journey.sample(height)
 	var disk: StandardMaterial3D = parts[0].material_override
-	disk.albedo_texture = Journey.platform_texture(5 if stone else theme.index)
+	disk.albedo_texture = Journey.platform_texture(Journey.Zone.MOON if stone else theme.index)
 	disk.roughness = 0.55 if theme.index == 1 and not stone else 0.85
 	if kind == "normal":
 		disk.albedo_color = theme.surface
 		parts[1].material_override.albedo_color = theme.surface.lightened(0.24)
-		parts[1].material_override.emission_enabled = theme.index >= 4
+		parts[1].material_override.emission_enabled = theme.dark > 0.5
 		parts[1].material_override.emission = theme.surface * 0.18
 
 func _setup_landing_effect() -> void:
@@ -158,7 +160,7 @@ func advance_feedback(delta: float) -> void:
 
 func advance_motion(delta: float) -> void:
 	if kind == "moving" and active:
-		motion_time += delta * 1.55
+		motion_time += delta * motion_speed
 		position.x = origin_x + sin(motion_time) * motion_amplitude
 
 func _piece(mesh: Mesh, offset: Vector3, color: Color, fit_to_disk: bool = true) -> MeshInstance3D:

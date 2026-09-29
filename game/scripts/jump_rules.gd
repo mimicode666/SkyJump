@@ -14,6 +14,15 @@ const MAX_HEIGHT_STEP: float = 2.6
 const SPAWN_AHEAD: float = 24.0
 const MAX_STEP_X: float = 2.85
 const PLATFORM_EDGE: float = 3.55
+const MOVING_MIN_SPEED: float = 1.1
+const MOVING_MAX_SPEED: float = 3.8
+const JETPACK_DURATION: float = 3.2
+const JETPACK_SPEED: float = 24.0
+const JETPACK_ACCELERATION: float = 40.0
+const JETPACK_MIN_INTERVAL: int = 36
+const JETPACK_MAX_INTERVAL: int = 52
+const JETPACK_MAGNET_RADIUS: float = 3.4
+const JETPACK_MAGNET_SPEED: float = 40.0
 
 static func pace(height: float, seconds: float) -> float:
 	# Scale simulation time, so jumps become quicker without changing their height.

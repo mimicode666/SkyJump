@@ -1,4 +1,5 @@
 extends Node3D
+const Rules = preload("res://scripts/jump_rules.gd")
 var active := true
 
 func _ready() -> void:
@@ -28,6 +29,13 @@ func _ready() -> void:
 	bright.albedo_color = Color("fff3a8")
 	border.material_override = bright
 	add_child(border)
+
+func attract(player_position: Vector3, step: float) -> void:
+	if not active: return
+	var target := player_position + Vector3.UP * 0.8
+	# Recheck proximity every tick: no attraction across a screen-wrap teleport.
+	if global_position.distance_to(target) <= Rules.JETPACK_MAGNET_RADIUS:
+		global_position = global_position.move_toward(target, Rules.JETPACK_MAGNET_SPEED * step)
 
 func collect(player_position: Vector3) -> bool:
 	if not active or global_position.distance_to(player_position + Vector3(0, 0.8, 0)) > 0.6:

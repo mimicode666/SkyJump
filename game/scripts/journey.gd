@@ -1,23 +1,28 @@
 extends Node3D
 ## All heights are world units (the HUD displays ten metres per unit).
 const NightSky = preload("res://scripts/night_sky.gd")
+enum Zone { EARTH, RAIN, SNOW, CLOUDS, SUNSET, NIGHT, MOON, GALAXIES }
+const MOTION_MULTIPLIERS = {Zone.NIGHT: 1.2, Zone.MOON: 1.35, Zone.GALAXIES: 1.5}
 const STAGES = [
 	{"at": 0.0, "name": "Земля", "top": Color("66cce8"), "horizon": Color("e5f5de"), "cloud": Color("f5fcff"), "surface": Color("95c75b"), "land": 1.0, "clouds": 1.0},
-	{"at": 18.0, "name": "Дождевые облака", "top": Color("506b8e"), "horizon": Color("bac9db"), "cloud": Color("a7b8d0"), "surface": Color("8ccbd9"), "rain": 1.0, "clouds": 1.0, "dark": 1.0},
-	{"at": 40.0, "name": "Над облаками", "top": Color("5daeea"), "horizon": Color("e6f7ff"), "cloud": Color("ffffff"), "surface": Color("e4e9fb"), "clouds": 1.0},
-	{"at": 70.0, "name": "Закат", "top": Color("9369b6"), "horizon": Color("ffd4a0"), "cloud": Color("fff0d7"), "surface": Color("efc080"), "clouds": 0.8},
-	{"at": 110.0, "name": "Звёздная ночь", "top": Color("010103"), "horizon": Color("03050b"), "cloud": Color("181b35"), "surface": Color("9caedf"), "stars": 1.0, "moon": 1.0, "dark": 1.0},
-	{"at": 160.0, "name": "У Луны", "top": Color("010104"), "horizon": Color("060815"), "cloud": Color("181b35"), "surface": Color("bdc4d3"), "stars": 1.0, "moon": 1.0, "near_moon": 1.0, "dark": 1.0},
-	{"at": 230.0, "name": "Далёкие галактики", "top": Color("080519"), "horizon": Color("100c26"), "cloud": Color("181b35"), "surface": Color("a69bd9"), "stars": 1.0, "galaxy": 1.0, "dark": 1.0},
+	{"at": 50.0, "name": "Дождевые облака", "top": Color("506b8e"), "horizon": Color("bac9db"), "cloud": Color("a7b8d0"), "surface": Color("8ccbd9"), "rain": 1.0, "clouds": 1.0, "dark": 1.0},
+	{"at": 110.0, "name": "Снежное небо", "top": Color("739fc3"), "horizon": Color("e4effa"), "cloud": Color("d9e8f4"), "surface": Color("f0f8ff"), "snow": 1.0, "clouds": 0.7},
+	{"at": 180.0, "name": "Над облаками", "top": Color("5daeea"), "horizon": Color("e6f7ff"), "cloud": Color("ffffff"), "surface": Color("e4e9fb"), "clouds": 1.0},
+	{"at": 280.0, "name": "Закат", "top": Color("9369b6"), "horizon": Color("ffd4a0"), "cloud": Color("fff0d7"), "surface": Color("efc080"), "clouds": 0.8},
+	{"at": 410.0, "name": "Звёздная ночь", "top": Color("010103"), "horizon": Color("03050b"), "cloud": Color("181b35"), "surface": Color("9caedf"), "stars": 1.0, "moon": 1.0, "dark": 1.0},
+	{"at": 580.0, "name": "У Луны", "top": Color("010104"), "horizon": Color("060815"), "cloud": Color("181b35"), "surface": Color("bdc4d3"), "stars": 1.0, "moon": 1.0, "near_moon": 1.0, "dark": 1.0},
+	{"at": 800.0, "name": "Далёкие галактики", "top": Color("080519"), "horizon": Color("100c26"), "cloud": Color("181b35"), "surface": Color("a69bd9"), "stars": 1.0, "galaxy": 1.0, "dark": 1.0},
 ]
-const FADE_HEIGHT := 12.0
+const FADE_HEIGHT := 20.0
 static var textures: Dictionary = {}
 var night := NightSky.new()
 var hills := Node3D.new()
 var rain := MultiMeshInstance3D.new()
+var snow := MultiMeshInstance3D.new()
 var galaxies := MultiMeshInstance3D.new()
 var galaxy_haze := MultiMeshInstance3D.new()
 var rain_points: Array[Vector2] = []
+var snow_points: Array[Vector3] = []
 var galaxy_points: Array[Vector3] = []
 var elapsed := 0.0
 var state: Dictionary = {}
@@ -29,6 +34,9 @@ static func stage_index(height: float) -> int:
 		if height >= STAGES[i].at: result = i
 	return result
 
+static func moving_speed_multiplier(height: float) -> float:
+	return MOTION_MULTIPLIERS.get(stage_index(height), 1.0)
+
 static func sample(height: float) -> Dictionary:
 	var index := stage_index(height)
 	var current: Dictionary = STAGES[index]
@@ -37,7 +45,7 @@ static func sample(height: float) -> Dictionary:
 	var result := {"index": index, "name": current.name}
 	for key in ["top", "horizon", "cloud", "surface"]:
 		result[key] = previous[key].lerp(current[key], blend)
-	for key in ["land", "clouds", "rain", "stars", "moon", "near_moon", "galaxy", "dark"]:
+	for key in ["land", "clouds", "rain", "snow", "stars", "moon", "near_moon", "galaxy", "dark"]:
 		result[key] = lerpf(previous.get(key, 0.0), current.get(key, 0.0), blend)
 	return result
 
@@ -50,13 +58,14 @@ static func platform_texture(zone: int) -> Texture2D:
 			var value: float = 0.93 + absf(grain) * 0.07
 			if zone == 0 and (x + y * 3) % 13 < 2: value = 0.83 # Grass fibres.
 			elif zone == 1 and (x * 7 + y * 11) % 41 < 2: value = 0.8 # Droplets.
-			elif zone == 2: value = 0.93 + sin(x * 0.15 + sin(y * 0.2)) * 0.07
-			elif zone == 3: value = 0.94 + sin(y * 0.3) * 0.06
-			elif zone == 5:
+			elif zone == Zone.SNOW: value = 0.96 if (x * 11 + y * 7) % 31 > 2 else 0.84
+			elif zone == Zone.CLOUDS: value = 0.93 + sin(x * 0.15 + sin(y * 0.2)) * 0.07
+			elif zone == Zone.SUNSET: value = 0.94 + sin(y * 0.3) * 0.06
+			elif zone == Zone.MOON:
 				for crater in [Vector3(18, 22, 9), Vector3(47, 43, 11), Vector3(45, 13, 5)]:
 					var distance: float = Vector2(x - crater.x, y - crater.y).length() / crater.z
 					if distance < 1: value *= 0.75 + 0.25 * distance
-			elif zone >= 4 and (x * 17 + y * 31) % 151 == 0: value = 0.72
+			elif zone >= Zone.NIGHT and (x * 17 + y * 31) % 151 == 0: value = 0.72
 			image.set_pixel(x, y, Color(value, value, value))
 	image.generate_mipmaps()
 	var texture := ImageTexture.create_from_image(image)
@@ -78,6 +87,13 @@ func _ready() -> void:
 		hill.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		hills.add_child(hill)
 	_setup_batch(rain, 42, Color("d8e8f8"))
+	_setup_batch(snow, 72, Color.WHITE)
+	var flake := Image.create(16, 16, false, Image.FORMAT_RGBA8)
+	for y in range(16):
+		for x in range(16):
+			var radius := (Vector2(x, y) - Vector2(7.5, 7.5)).length() / 7.5
+			flake.set_pixel(x, y, Color(1, 1, 1, 1 - smoothstep(0.4, 1.0, radius)))
+	snow.material_override.albedo_texture = ImageTexture.create_from_image(flake)
 	_setup_batch(galaxies, 192, Color.WHITE)
 	_setup_batch(galaxy_haze, 2, Color.WHITE)
 	var glow := Image.create(64, 64, false, Image.FORMAT_RGBA8)
@@ -91,6 +107,7 @@ func _ready() -> void:
 	var random := RandomNumberGenerator.new()
 	random.seed = 280926 # Never consume the route's RNG.
 	for i in range(42): rain_points.append(Vector2(random.randf(), random.randf()))
+	for i in range(72): snow_points.append(Vector3(random.randf(), random.randf(), random.randf()))
 	for i in range(192):
 		var arm: float = i % 3 * TAU / 3.0
 		var radius := random.randf_range(0.02, 1.0)
@@ -144,6 +161,16 @@ func update_view(height: float, span: Vector2, delta: float) -> void:
 			var at := Vector3((p.x - 0.5) * span.x, (0.5 - fposmod(p.y + elapsed * 0.32, 1.0)) * span.y, -1)
 			var basis := Basis.IDENTITY.scaled(Vector3(0.012, 0.18, 1)).rotated(Vector3.FORWARD, -0.13)
 			rain.multimesh.set_instance_transform(i, Transform3D(basis, at))
+	snow.visible = state.snow > 0.001
+	if snow.visible:
+		snow.material_override.albedo_color.a = state.snow * 0.9
+		for i in range(snow_points.size()):
+			var p := snow_points[i]
+			var x := fposmod(p.x + sin(elapsed * 0.55 + i) * 0.018, 1.0)
+			var y := fposmod(p.y + elapsed * lerpf(0.045, 0.10, p.z), 1.0)
+			var size := lerpf(0.035, 0.085, p.z)
+			var at := Vector3((x - 0.5) * span.x, (0.5 - y) * span.y, -0.5)
+			snow.multimesh.set_instance_transform(i, Transform3D(Basis.IDENTITY.scaled(Vector3(size, size, 1)), at))
 	galaxies.visible = state.galaxy > 0.001
 	galaxy_haze.visible = galaxies.visible
 	if galaxies.visible:

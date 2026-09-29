@@ -6,6 +6,7 @@ const JumpPlatform = preload("res://scripts/jump_platform.gd")
 const Wallet = preload("res://scripts/wallet.gd")
 const PlatformServices = preload("res://scripts/platform_services.gd")
 const Coin = preload("res://scripts/coin.gd")
+const Jetpack = preload("res://scripts/jetpack.gd")
 const WalletBadge = preload("res://scripts/wallet_badge.gd")
 const Catalog = preload("res://scripts/catalog.gd")
 const TouchDirection = preload("res://scripts/touch_direction.gd")
@@ -36,6 +37,8 @@ var velocity := Vector2.ZERO
 var highest: float = 0.0
 var camera_height: float = 2.3
 var rng := RandomNumberGenerator.new()
+var motion_rng := RandomNumberGenerator.new()
+var pickup_rng := RandomNumberGenerator.new()
 var menu: Control
 var hud: Control
 var overlay: Control
@@ -75,6 +78,10 @@ var run_seconds := 0.0
 var current_pace := 1.0
 var environment_ink := Color.TRANSPARENT
 var wallet_ink := Color.TRANSPARENT
+var jetpack_nodes: Array[Node3D] = []
+var jetpack_visual := Jetpack.new()
+var jetpack_fuel := 0.0
+var next_jetpack_index := 24
 
 func _ready() -> void:
 	Engine.max_fps = 60
@@ -104,6 +111,8 @@ func _ready() -> void:
 
 func _rng_setup() -> void:
 	rng.randomize()
+	motion_rng.randomize()
+	pickup_rng.randomize()
 	for action in ["move_left", "move_right"]:
 		if not InputMap.has_action(action):
 			InputMap.add_action(action)
@@ -187,6 +196,8 @@ func _setup_world() -> void:
 		clouds.add_child(cloud)
 	player = Node3D.new()
 	add_child(player)
+	player.add_child(jetpack_visual)
+	jetpack_visual.hide()
 	_update_camera(1.0)
 	_add_platform(Vector3(1.5, 0, 0), 0)
 
@@ -194,7 +205,9 @@ func _add_platform(pos: Vector3, index: int, stone: bool = false, kind: String =
 	var node := JumpPlatform.new()
 	node.position = pos
 	var menu_stand: bool = mode == "menu"
-	node.configure(Color("fff8ed") if menu_stand else COLORS[index % COLORS.size()], stone, kind)
+	var motion_speed := motion_rng.randf_range(Rules.MOVING_MIN_SPEED, Rules.MOVING_MAX_SPEED) if kind == "moving" else 1.55
+	if kind == "moving": motion_speed *= Journey.moving_speed_multiplier(pos.y)
+	node.configure(Color("fff8ed") if menu_stand else COLORS[index % COLORS.size()], stone, kind, motion_speed)
 	if menu_stand:
 		node.scale = Vector3(2.0, 1.0, 2.0)
 	world.add_child(node)
@@ -214,6 +227,9 @@ func _generate_platform() -> void:
 		elif roll > 0.85:
 			kind = "boost"
 	_add_platform(next, generated_count, kind == "stone", kind)
+	if generated_count >= next_jetpack_index and kind == "normal" and generated_count < next_coin_index:
+		_spawn_jetpack(platform_nodes.back())
+		next_jetpack_index = generated_count + pickup_rng.randi_range(Rules.JETPACK_MIN_INTERVAL, Rules.JETPACK_MAX_INTERVAL)
 	if generated_count >= next_coin_index:
 		_spawn_coin(platform_nodes.back())
 		next_coin_index = generated_count + rng.randi_range(5, 8)
@@ -235,12 +251,14 @@ func _spawn_coin(platform: Node3D) -> void:
 	coin.position = Vector3(0, 1.05, 0)
 	coin_nodes.append(coin)
 
-func _collect_coins() -> void:
+func _collect_coins(step: float = 0.0) -> void:
 	for i in range(coin_nodes.size() - 1, -1, -1):
 		var coin = coin_nodes[i]
 		if not is_instance_valid(coin):
 			coin_nodes.remove_at(i)
-		elif coin.collect(player.position):
+			continue
+		if jetpack_fuel > 0: coin.attract(player.position, step)
+		if coin.collect(player.position):
 			coin_nodes.remove_at(i)
 			var amount: int = wallet.coin_multiplier()
 			run_coins += amount
@@ -250,8 +268,43 @@ func _collect_coins() -> void:
 func _update_wallet_labels() -> void:
 	ui.wallet_badge.update_balance(wallet.balance, wallet.persistent)
 
+func _spawn_jetpack(platform: Node3D) -> void:
+	var pickup := Jetpack.new()
+	platform.add_child(pickup)
+	pickup.position = Vector3(0, 1.0, 0)
+	pickup.scale = Vector3.ONE * 0.8
+	jetpack_nodes.append(pickup)
+
+func _collect_jetpacks(previous: Vector3) -> void:
+	# A wrap is a teleport, not a sweep through every pickup in the playfield.
+	if absf(previous.x - player.position.x) > _wrap_half_width(): previous.x = player.position.x
+	for i in range(jetpack_nodes.size() - 1, -1, -1):
+		var pickup = jetpack_nodes[i]
+		if not is_instance_valid(pickup):
+			jetpack_nodes.remove_at(i)
+		elif jetpack_fuel <= 0 and pickup.collect(previous, player.position):
+			jetpack_nodes.remove_at(i)
+			jetpack_fuel = Rules.JETPACK_DURATION
+			velocity.y = maxf(velocity.y, 8.0)
+			jetpack_visual.show()
+			if wallet.sound_enabled: bounce_sound.bounce("boost")
+			_update_jetpack_indicator()
+
+func _stop_jetpack() -> void:
+	jetpack_fuel = 0
+	jetpack_visual.hide()
+	_update_jetpack_indicator()
+
+func _update_jetpack_indicator() -> void:
+	if not ui.has("jetpack_meter"): return
+	ui.jetpack_meter.value = jetpack_fuel
+	ui.jetpack_meter.visible = jetpack_fuel > 0
+	ui.jetpack_label.visible = jetpack_fuel > 0
+
 func _clear_platforms() -> void:
 	coin_nodes.clear()
+	jetpack_nodes.clear()
+	_stop_jetpack()
 	for node in world.get_children():
 		world.remove_child(node)
 		node.queue_free()
@@ -372,6 +425,21 @@ func _setup_ui() -> void:
 	pause_button.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
 	pause_button.position = Vector2(-195, 28)
 	hud.add_child(pause_button)
+	var fuel_label := _label("Джетпак", 16)
+	fuel_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hud.add_child(fuel_label)
+	var fuel_meter := ProgressBar.new()
+	fuel_meter.max_value = Rules.JETPACK_DURATION
+	fuel_meter.show_percentage = false
+	fuel_meter.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	for bar_style in ["background", "fill"]:
+		var bar := StyleBoxFlat.new()
+		bar.bg_color = Color("eaf4fc") if bar_style == "background" else Color("edb83d")
+		bar.set_corner_radius_all(4)
+		fuel_meter.add_theme_stylebox_override(bar_style, bar)
+	hud.add_child(fuel_meter)
+	fuel_label.hide()
+	fuel_meter.hide()
 	var hint := _label("Стрелки или A / D       ·       Esc — пауза", 16)
 	hint.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)
 	hint.position = Vector2(40, -44)
@@ -430,6 +498,7 @@ func _setup_ui() -> void:
 	ad_label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	ad_cover.add_child(ad_label)
 	ui = {"title": title, "heading": heading, "subtitle": subtitle, "pickers": pickers,
+		"jetpack_label": fuel_label, "jetpack_meter": fuel_meter,
 		"back": back_button, "tutorial": tutorial,
 		"ad_cover": ad_cover, "ad_label": ad_label,
 		"bottom": menu_bottom, "menu_hint": menu_hint, "pause": pause_button,
@@ -521,6 +590,8 @@ func _resize_ui() -> void:
 	score_label.add_theme_font_size_override("font_size", 34 if compact else 42)
 	_place(record_label, Vector2(margin, 65 if compact else 78), Vector2(180, 24))
 	_place(ui.pause, Vector2(area.x - margin - 112, 24), Vector2(112, 52))
+	_place(ui.jetpack_label, Vector2(area.x - margin - 112, 84), Vector2(112, 22))
+	_place(ui.jetpack_meter, Vector2(area.x - margin - 112, 110), Vector2(112, 8))
 	ui.hint.visible = not touch_controls
 	_place(ui.hint, Vector2(margin, area.y - 40), Vector2(area.x - margin * 2, 24))
 	for i in range(2):
@@ -707,6 +778,7 @@ func _update_environment_label_colors() -> void:
 		environment_ink = ink
 		for label in [ui.title, ui.heading, ui.subtitle, model_label, ui.menu_hint, score_label, record_label, ui.hint]:
 			label.add_theme_color_override("font_color", ink)
+		ui.jetpack_label.add_theme_color_override("font_color", ink)
 	var balance_ink := Color("315470") if overlay.visible else ink
 	if not balance_ink.is_equal_approx(wallet_ink):
 		wallet_ink = balance_ink
@@ -729,6 +801,7 @@ func start_game() -> void:
 	last_was_stone = false
 	last_was_moving = false
 	next_coin_index = rng.randi_range(5, 8)
+	next_jetpack_index = pickup_rng.randi_range(22, 30)
 	run_coins = 0
 	run_seconds = 0.0
 	current_pace = 1.0
@@ -765,8 +838,18 @@ func _physics_process(delta: float) -> void:
 	if touch_left or touch_right:
 		direction = float(touch_right) - float(touch_left)
 	velocity.x = move_toward(velocity.x, direction * Rules.MOVE_SPEED, Rules.ACCELERATION * step)
+	var previous_position: Vector3 = player.position
 	var previous_y: float = player.position.y
-	velocity.y -= Rules.GRAVITY * step
+	if jetpack_fuel > 0:
+		jetpack_fuel = maxf(0, jetpack_fuel - step)
+		var thrust_speed := lerpf(Rules.JUMP_SPEED, Rules.JETPACK_SPEED, clampf(jetpack_fuel / 0.35, 0, 1))
+		velocity.y = move_toward(velocity.y, thrust_speed, Rules.JETPACK_ACCELERATION * step)
+		if jetpack_fuel <= 0:
+			velocity.y = minf(velocity.y, Rules.JUMP_SPEED)
+			_stop_jetpack()
+		_update_jetpack_indicator()
+	else:
+		velocity.y -= Rules.GRAVITY * step
 	player.position.x = Rules.wrap_x(player.position.x + velocity.x * step, _wrap_half_width())
 	player.position.y += velocity.y * step
 	for i in range(platforms.size()):
@@ -786,7 +869,8 @@ func _physics_process(delta: float) -> void:
 				broken.break_apart()
 				broken_platforms.append(broken)
 			break
-	_collect_coins()
+	_collect_coins(step)
+	_collect_jetpacks(previous_position)
 	highest = maxf(highest, player.position.y)
 	camera_height = maxf(camera_height, highest + 1.0)
 	score_label.text = "%d м" % int(highest * 10.0)
@@ -807,6 +891,9 @@ func _process(delta: float) -> void:
 	if mode == "menu" and visual != null:
 		visual.rotation.y = sin(Time.get_ticks_msec() * 0.00045) * 0.22
 	if mode == "playing" and visual != null:
+		for pickup in jetpack_nodes:
+			if is_instance_valid(pickup): pickup.animate(delta * current_pace, false)
+		if jetpack_fuel > 0: jetpack_visual.animate(delta * current_pace, true)
 		for coin in coin_nodes:
 			if is_instance_valid(coin): coin.rotation.y += delta * current_pace * 2.0
 		visual.rotation.z = lerpf(visual.rotation.z, -velocity.x * 0.035, delta * 10.0)
@@ -863,6 +950,9 @@ func _update_camera(delta: float) -> void:
 		# its screen position and scale, but keeps it in front of solid platforms.
 		# The logical player, landings, coins and source GLB materials stay unchanged.
 		visual.global_position = player.global_position + (camera.global_basis.z * 4.0 if mode != "menu" else Vector3.ZERO)
+		if jetpack_fuel > 0:
+			jetpack_visual.global_position = visual.global_position + Vector3(0, 0.72, -0.34)
+			jetpack_visual.rotation = Vector3(0, visual.rotation.y, visual.rotation.z)
 
 func _frame_game_camera(view_camera: Camera3D) -> void:
 	var area := view_camera.get_viewport().get_visible_rect().size
@@ -986,6 +1076,7 @@ func resume_game() -> void:
 	_sync_platform_state()
 
 func finish_game() -> void:
+	_stop_jetpack()
 	_reset_touch()
 	for pad in ui.pads: pad.hide()
 	mode = "gameover"

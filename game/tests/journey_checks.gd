@@ -11,6 +11,7 @@ static func run(game: Node3D) -> void:
 			assert(before.top.is_equal_approx(after.top) or before.top.to_rgba32() == after.top.to_rgba32())
 			assert(absf(before.stars - after.stars) < 0.001)
 			assert(absf(before.clouds - after.clouds) < 0.001)
+			assert(absf(before.snow - after.snow) < 0.001)
 	game.start_game()
 	game.mode = "paused"
 	game._clear_platforms()
@@ -21,6 +22,11 @@ static func run(game: Node3D) -> void:
 		game.player.position = Vector3(0, game.highest, 0)
 		game._update_camera(1.0)
 		assert(game.journey.state.name == stage.name)
+		assert(game.journey.snow.visible == (stage.name == "Снежное небо"))
+		if game.journey.snow.visible:
+			var snow_before: Vector3 = game.journey.snow.multimesh.get_instance_transform(0).origin
+			game.journey.update_view(game.highest, Vector2(12, 10), 0.25)
+			assert(not game.journey.snow.multimesh.get_instance_transform(0).origin.is_equal_approx(snow_before))
 		assert(game.rng.state == random_state, "Decoration consumed route RNG")
 		game._add_platform(Vector3(0, game.highest, 0), 0)
 		var platform: Node3D = game.platform_nodes.back()
@@ -29,7 +35,7 @@ static func run(game: Node3D) -> void:
 		await game.get_tree().process_frame
 		await RenderingServer.frame_post_draw
 		game._clear_platforms()
-	assert(Journey.textures.size() == 7)
+	assert(Journey.textures.size() == Journey.STAGES.size())
 	assert(game.journey.galaxies.visible and not game.journey.night.moon.visible)
 	# Animated artwork must not move the collision root or the attached coin.
 	for kind in ["normal", "moving", "boost", "stone"]:
@@ -82,7 +88,8 @@ static func run(game: Node3D) -> void:
 	await load("res://tests/camera_framing_checks.gd").integration(game)
 	assert(game.journey.state.index == 0 and not game.ui.has("map_choice"))
 	for sound in game.bounce_sound.SOUNDS.values(): assert(sound.get_length() > 0.05 and sound.get_length() < 0.3)
-	print("SKYJUMP_JOURNEY_OK seven_zones smooth_transitions route_rng textures solid_platforms bounce spring stone pause reset one_model local_pcm")
+	assert(await load("res://tests/jetpack_checks.gd").run(game), "Jetpack checks did not complete")
+	print("SKYJUMP_JOURNEY_OK eight_zones snow smooth_transitions route_rng textures solid_platforms bounce spring stone pause reset one_model local_pcm")
 
 static func show_tour(game: Node3D) -> void:
 	# Explicit QA-only UI for checking actual Web-rendered zones without playing
@@ -91,6 +98,7 @@ static func show_tour(game: Node3D) -> void:
 	game.mode = "paused"
 	game.overlay.hide()
 	var layer := CanvasLayer.new()
+	layer.layer = 5
 	game.add_child(layer)
 	var next := Button.new()
 	next.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)
@@ -110,6 +118,7 @@ static func show_tour(game: Node3D) -> void:
 		game.platform_nodes[1].advance_feedback(0.07)
 		game.score_label.text = "%d м" % int(game.highest * 10)
 		game._update_camera(1)
-		next.text = "QA %d/7 · %s · Далее" % [state.index + 1, Journey.STAGES[state.index].name]
+		next.text = "QA %d/%d · %s · Далее" % [state.index + 1, Journey.STAGES.size(), Journey.STAGES[state.index].name]
 	next.pressed.connect(advance)
 	advance.call()
+	next.grab_focus()

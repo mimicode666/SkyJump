@@ -6,6 +6,8 @@ var balance: int = 0
 var path: String
 var persistent := true
 var owned: Array[String] = []
+var owned_trails: Array[String] = []
+var selected_trail := "none"
 var sound_enabled := true
 var refunded_maps_amount := 0
 var records: Array[Dictionary] = []
@@ -36,6 +38,12 @@ func _init(save_path: String = "user://wallet.cfg") -> void:
 			for id in saved_owned:
 				if id is String and not Catalog.character(id).is_empty() and not owned.has(id): owned.append(id)
 		sound_enabled = bool(config.get_value("wallet", "sound_enabled", true))
+		var saved_trails = config.get_value("wallet", "owned_trails", [])
+		if saved_trails is Array:
+			for id in saved_trails:
+				if id is String and not Catalog.trail(id).is_empty() and not owned_trails.has(id): owned_trails.append(id)
+		var saved_selection = config.get_value("wallet", "selected_trail", "none")
+		if saved_selection is String and owns_trail(saved_selection): selected_trail = saved_selection
 		var expiry = config.get_value("wallet", "double_until", 0)
 		if expiry is int: double_until = maxi(0, expiry)
 		var saved_records = config.get_value("wallet", "records", [])
@@ -75,6 +83,25 @@ func activate_double_coins() -> void:
 	double_until = int(clock.call()) + 600
 	_save()
 
+func owns_trail(id: String) -> bool:
+	var entry := Catalog.trail(id)
+	return not entry.is_empty() and (entry.price == 0 or owned_trails.has(id))
+
+func purchase_trail(id: String) -> bool:
+	var entry := Catalog.trail(id)
+	if entry.is_empty() or owns_trail(id) or balance < entry.price: return false
+	balance -= entry.price
+	owned_trails.append(id)
+	selected_trail = id
+	_save()
+	return true
+
+func equip_trail(id: String) -> bool:
+	if not owns_trail(id): return false
+	selected_trail = id
+	_save()
+	return true
+
 func toggle_sound() -> void:
 	sound_enabled = not sound_enabled
 	_save()
@@ -109,6 +136,8 @@ func _save() -> void:
 	config.set_value("wallet", "version", 4)
 	config.set_value("wallet", "coins", balance)
 	config.set_value("wallet", "owned", owned)
+	config.set_value("wallet", "owned_trails", owned_trails)
+	config.set_value("wallet", "selected_trail", selected_trail)
 	config.set_value("wallet", "sound_enabled", sound_enabled)
 	config.set_value("wallet", "records", records)
 	config.set_value("wallet", "double_until", double_until)

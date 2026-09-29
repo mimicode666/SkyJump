@@ -7,6 +7,8 @@ const Wallet = preload("res://scripts/wallet.gd")
 const PlatformServices = preload("res://scripts/platform_services.gd")
 const Coin = preload("res://scripts/coin.gd")
 const Jetpack = preload("res://scripts/jetpack.gd")
+const PlayerTrail = preload("res://scripts/player_trail.gd")
+const TrailPreview = preload("res://scripts/trail_preview.gd")
 const WalletBadge = preload("res://scripts/wallet_badge.gd")
 const Catalog = preload("res://scripts/catalog.gd")
 const TouchDirection = preload("res://scripts/touch_direction.gd")
@@ -82,16 +84,20 @@ var jetpack_nodes: Array[Node3D] = []
 var jetpack_visual := Jetpack.new()
 var jetpack_fuel := 0.0
 var next_jetpack_index := 24
+var trail := PlayerTrail.new()
+var preview_trail := "none"
 
 func _ready() -> void:
 	Engine.max_fps = 60
 	var camera_test: bool = "--camera-test" in OS.get_cmdline_user_args()
 	var journey_test: bool = "--journey-test" in OS.get_cmdline_user_args()
-	automated = "--self-test" in OS.get_cmdline_user_args() or camera_test or journey_test
+	var trail_test: bool = "--trail-test" in OS.get_cmdline_user_args()
+	automated = "--self-test" in OS.get_cmdline_user_args() or camera_test or journey_test or trail_test
 	services.availability_changed.connect(_platform_available_changed)
 	services.suspension_changed.connect(_platform_suspension_changed)
 	services.initialize(automated)
 	wallet = Wallet.new("user://qa-journey-wallet.cfg" if journey_test else ("user://qa-camera-wallet.cfg" if camera_test else ("user://qa-run-wallet.cfg" if automated else "user://wallet.cfg")))
+	if trail_test: wallet = Wallet.new("user://qa-trail-wallet.cfg")
 	wallet.clock = func(): return services.now_seconds()
 	session_best = wallet.best_score()
 	_rng_setup()
@@ -107,7 +113,7 @@ func _ready() -> void:
 			assert(services.bridge != null and services.status == "local", "Web platform bridge did not initialize")
 			print("SKYJUMP_PLATFORM_BRIDGE_OK local_no_sdk_requests")
 		print("QA_WALLET_LOADED=", wallet.balance)
-		call_deferred("_run_journey_test" if journey_test else ("_run_camera_test" if camera_test else "_run_self_test"))
+		call_deferred("_run_trail_test" if trail_test else ("_run_journey_test" if journey_test else ("_run_camera_test" if camera_test else "_run_self_test")))
 
 func _rng_setup() -> void:
 	rng.randomize()
@@ -197,6 +203,7 @@ func _setup_world() -> void:
 	player = Node3D.new()
 	add_child(player)
 	player.add_child(jetpack_visual)
+	add_child(trail)
 	jetpack_visual.hide()
 	_update_camera(1.0)
 	_add_platform(Vector3(1.5, 0, 0), 0)
@@ -302,6 +309,7 @@ func _update_jetpack_indicator() -> void:
 	ui.jetpack_label.visible = jetpack_fuel > 0
 
 func _clear_platforms() -> void:
+	trail.reset(wallet.selected_trail)
 	coin_nodes.clear()
 	jetpack_nodes.clear()
 	_stop_jetpack()
@@ -378,9 +386,18 @@ func _setup_ui() -> void:
 	pickers.add_theme_constant_override("separation", 12)
 	menu.add_child(pickers)
 	var character_choice := _button("", func(): _open_menu_page("characters"))
+	var trail_choice := _button("Шлейфы", func(): _open_menu_page("trails"))
 	var sound_choice := _button("", _toggle_sound)
 	pickers.add_child(character_choice)
-	pickers.add_child(sound_choice)
+	var appearance_row := HBoxContainer.new()
+	appearance_row.add_theme_constant_override("separation", 10)
+	pickers.add_child(appearance_row)
+	appearance_row.add_child(trail_choice)
+	appearance_row.add_child(sound_choice)
+	trail_choice.add_theme_font_size_override("font_size", 17)
+	sound_choice.add_theme_font_size_override("font_size", 17)
+	var trail_preview := TrailPreview.new()
+	menu.add_child(trail_preview)
 	var options := ScrollContainer.new()
 	options.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	menu.add_child(options)
@@ -498,6 +515,7 @@ func _setup_ui() -> void:
 	ad_label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	ad_cover.add_child(ad_label)
 	ui = {"title": title, "heading": heading, "subtitle": subtitle, "pickers": pickers,
+		"trail_choice": trail_choice, "trail_preview": trail_preview,
 		"jetpack_label": fuel_label, "jetpack_meter": fuel_meter,
 		"back": back_button, "tutorial": tutorial,
 		"ad_cover": ad_cover, "ad_label": ad_label,
@@ -549,7 +567,7 @@ func _resize_ui() -> void:
 	_place(ui.heading, Vector2(margin, 44 if short_landscape else 53), Vector2(menu_width, 52))
 	ui.heading.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER if menu_page == "records" else HORIZONTAL_ALIGNMENT_LEFT
 	if menu_page == "records": ui.heading.size.x = area.x - margin * 2
-	ui.subtitle.text = "От земли до далёких галактик" if menu_page == "home" else "Нажмите, чтобы выбрать героя"
+	ui.subtitle.text = "От земли до далёких галактик" if menu_page == "home" else ("Выберите свой след в небе" if menu_page == "trails" else "Нажмите, чтобы выбрать героя")
 	ui.subtitle.visible = menu_page != "records"
 	ui.subtitle.add_theme_font_size_override("font_size", 16 if compact else 20)
 	ui.subtitle.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -558,9 +576,9 @@ func _resize_ui() -> void:
 		ui.heading.position.y = ui.back.position.y + ui.back.size.y + 10
 		ui.subtitle.position.y = ui.heading.position.y + 48
 	_place(ui.pickers, Vector2(margin, 148 if short_landscape else (159 if compact else 195)), Vector2(menu_width, 120))
-	for button in [ui.character_choice, ui.sound_choice]:
+	for button in [ui.character_choice, ui.trail_choice, ui.sound_choice]:
 		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		button.custom_minimum_size = Vector2(0, 54)
+		button.custom_minimum_size = Vector2(0, 44 if short_landscape else 54)
 	_place(model_label, Vector2(margin, 272 if compact else 330), Vector2(menu_width, 46))
 	model_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	var bottom_height: float = 132 if portrait else (116 if compact else 155)
@@ -578,10 +596,12 @@ func _resize_ui() -> void:
 	var content_top: float = ui.subtitle.position.y + 46
 	var options_y: float = content_top
 	if menu_page == "records": options_y = ui.heading.position.y + ui.heading.size.y + 18
-	if portrait and menu_page == "characters":
+	if portrait and menu_page in ["characters", "trails"]:
 		options_y += clampf((area.y - 500) * 0.3 + 100, 120, 200)
 	var list_width: float = minf(640, area.x - margin * 2) if menu_page == "records" else menu_width
 	_place(ui.options, Vector2(margin, options_y), Vector2(list_width, maxf(80, ui.bottom.position.y - options_y - 16)))
+	ui.trail_preview.visible = menu_page == "trails"
+	_place(ui.trail_preview, Vector2(margin, content_top) if portrait else Vector2(area.x * 0.57, content_top), Vector2(menu_width, options_y - content_top - 16) if portrait else Vector2(area.x * 0.43 - margin, minf(240, area.y - content_top - 100)))
 	if menu_page == "records":
 		ui.options.position.x = (area.x - list_width) * 0.5
 		ui.bottom.size.x = minf(360, area.x - margin * 2)
@@ -657,9 +677,14 @@ func _update_choice_labels() -> void:
 		if entry.id == selected:
 			ui.character_choice.text = "Персонаж: " + entry.name
 	ui.sound_choice.text = "Звук: вкл." if wallet.sound_enabled else "Звук: выкл."
+	ui.trail_choice.text = "Шлейфы"
 	for button in ui.option_list.get_children():
 		if not button is Button: continue
-		button.set_pressed_no_signal(button.get_meta("choice") == selected)
+		button.set_pressed_no_signal(button.get_meta("choice") == (preview_trail if menu_page == "trails" else selected))
+		if menu_page == "trails":
+			var entry := Catalog.trail(button.get_meta("choice"))
+			var status := " · выбран" if wallet.selected_trail == entry.id else (" · куплен" if wallet.owns_trail(entry.id) and entry.price > 0 else "")
+			button.text = entry.name + status if entry.price == 0 else "%s\n%d монет%s" % [entry.name, entry.price, status]
 		if menu_page == "characters":
 			var entry := Catalog.character(button.get_meta("choice"))
 			var owned: bool = wallet.owns_character(entry.id)
@@ -675,11 +700,26 @@ func _update_choice_labels() -> void:
 			play_button.disabled = wallet.balance < entry.price
 			play_button.text = "Не хватает %d монет" % (entry.price - wallet.balance) if play_button.disabled else "Купить за %d монет" % entry.price
 	if visual == null: play_button.disabled = true
+	if menu_page == "trails":
+		var entry := Catalog.trail(preview_trail)
+		if wallet.owns_trail(preview_trail):
+			play_button.text = "Выбрать"
+		else:
+			play_button.disabled = wallet.balance < entry.price
+			play_button.text = "Не хватает %d монет" % (entry.price - wallet.balance) if play_button.disabled else "Купить за %d монет" % entry.price
 	_update_reward_buttons()
 
 func _menu_action() -> void:
 	if ad_pending: return
 	if menu_page == "home": _request_start()
+	elif menu_page == "trails":
+		if wallet.owns_trail(preview_trail):
+			wallet.equip_trail(preview_trail)
+			_open_menu_page("home")
+		else:
+			wallet.purchase_trail(preview_trail)
+		_update_wallet_labels()
+		_update_choice_labels()
 	elif menu_page == "characters" and not wallet.owns_character(selected):
 		if wallet.purchase_character(selected): equipped = selected
 		_update_wallet_labels()
@@ -693,18 +733,34 @@ func _toggle_sound() -> void:
 
 func _open_menu_page(page: String) -> void:
 	menu_page = page
+	if page == "trails":
+		preview_trail = wallet.selected_trail
+		ui.trail_preview.style = preview_trail
 	if page == "home" and not wallet.owns_character(selected): select_character(equipped)
-	player.visible = page != "records"
-	world.visible = page != "records"
+	player.visible = page not in ["records", "trails"]
+	world.visible = page not in ["records", "trails"]
 	ui.title.text = "ВЫШЕ ОБЛАКОВ" if page == "home" else "SkyJump"
 	ui.heading.text = "SkyJump" if page == "home" else "Персонажи"
 	if page == "records": ui.heading.text = "Рекорды"
+	if page == "trails": ui.heading.text = "Шлейфы"
 	play_button.text = "Прыгать!" if page == "home" else "Готово"
 	for child in ui.option_list.get_children():
 		ui.option_list.remove_child(child)
 		child.queue_free()
 	if page == "records":
 		_build_record_card()
+	elif page == "trails":
+		for entry in Catalog.TRAILS:
+			var id: String = entry.id
+			var button := _button(entry.name, func():
+				preview_trail = id
+				ui.trail_preview.style = id
+				_update_choice_labels())
+			button.toggle_mode = true
+			button.custom_minimum_size.y = 66
+			button.add_theme_font_size_override("font_size", 17)
+			button.set_meta("choice", id)
+			ui.option_list.add_child(button)
 	elif page == "characters":
 		for entry in Catalog.CHARACTERS:
 			var id: String = entry.id
@@ -890,6 +946,7 @@ func _process(delta: float) -> void:
 	if platform_suspended or ad_pending: return
 	if mode == "menu" and visual != null:
 		visual.rotation.y = sin(Time.get_ticks_msec() * 0.00045) * 0.22
+		if menu_page == "trails": ui.trail_preview.advance(delta)
 	if mode == "playing" and visual != null:
 		for pickup in jetpack_nodes:
 			if is_instance_valid(pickup): pickup.animate(delta * current_pace, false)
@@ -904,6 +961,7 @@ func _process(delta: float) -> void:
 			else:
 				broken_platforms[i].animate_break(delta)
 	_update_camera(delta)
+	if mode == "playing": trail.advance(player.position + Vector3.UP * 0.3, delta, camera, _wrap_half_width())
 	for cloud in clouds.get_children():
 		if cloud.position.y < camera_height - 9:
 			cloud.position.y += 25
@@ -916,9 +974,10 @@ func _update_camera(delta: float) -> void:
 	if mode == "menu" and portrait and not ui.is_empty():
 		var area := Vector2(get_window().content_scale_size)
 		var preview_top: float = ui.subtitle.position.y + 46
-		var model_center: float = (287.0 + ui.actions.position.y) * 0.5 if menu_page == "home" else (preview_top + ui.options.position.y) * 0.5
+		var home_preview_top: float = ui.pickers.position.y + ui.pickers.size.y + 12
+		var model_center: float = (home_preview_top + ui.actions.position.y) * 0.5 if menu_page == "home" else (preview_top + ui.options.position.y) * 0.5
 		if menu_page != "home": model_center -= 7
-		var preview_scale: float = clampf((ui.actions.position.y - 287.0) / 250.0, 0.72, 1.0) if menu_page == "home" else clampf((ui.options.position.y - preview_top - 20) * 7.2 / area.x / 3.6, 0.35, 0.78)
+		var preview_scale: float = clampf((ui.actions.position.y - home_preview_top) / 250.0, 0.40, 1.0) if menu_page == "home" else clampf((ui.options.position.y - preview_top - 20) * 7.2 / area.x / 3.6, 0.35, 0.78)
 		player.scale = Vector3.ONE * preview_scale
 		target_y = 1.65 * preview_scale + (model_center - area.y * 0.5) * 7.2 / area.x
 	elif mode == "menu" and menu_page == "characters":
@@ -1076,6 +1135,7 @@ func resume_game() -> void:
 	_sync_platform_state()
 
 func finish_game() -> void:
+	trail.reset(wallet.selected_trail)
 	_stop_jetpack()
 	_reset_touch()
 	for pad in ui.pads: pad.hide()
@@ -1440,6 +1500,10 @@ func _run_journey_test() -> void:
 	await load("res://tests/journey_checks.gd").run(self)
 	if "--journey-tour" in OS.get_cmdline_user_args():
 		load("res://tests/journey_checks.gd").show_tour(self)
+	if not OS.has_feature("web"): get_tree().quit()
+
+func _run_trail_test() -> void:
+	assert(await load("res://tests/trail_checks.gd").run(self))
 	if not OS.has_feature("web"): get_tree().quit()
 
 func _run_camera_test() -> void:

@@ -3,6 +3,8 @@ extends RefCounted
 const CHARACTERS = [
 	{"id": "pikachu", "name": "Пикачу", "price": 0, "model": "res://assets/models/pikachu.glb"},
 	{"id": "yablochko", "name": "Яблочко", "price": 0, "model": "res://assets/models/yablochko.glb"},
+	{"id": "penguin", "name": "Пингвин", "price": 0, "model": "res://assets/models/penguin.glb"},
+	{"id": "minion", "name": "Миньон", "price": 100, "model": "res://assets/models/minion.glb"},
 	{"id": "zaichik", "name": "Зайчик", "price": 50, "model": "res://assets/models/zaichik.glb"},
 	{"id": "klubnich", "name": "Клубнич Джунгариков", "price": 75, "model": "res://assets/models/klubnich.glb"},
 	{"id": "manye", "name": "Манье", "price": 200, "model": "res://assets/models/manye.glb"},

@@ -87,11 +87,13 @@ func _ready() -> void:
 	Engine.max_fps = 60
 	var camera_test: bool = "--camera-test" in OS.get_cmdline_user_args()
 	var journey_test: bool = "--journey-test" in OS.get_cmdline_user_args()
-	automated = "--self-test" in OS.get_cmdline_user_args() or camera_test or journey_test
+	var models_test: bool = "--models-test" in OS.get_cmdline_user_args()
+	automated = "--self-test" in OS.get_cmdline_user_args() or camera_test or journey_test or models_test
 	services.availability_changed.connect(_platform_available_changed)
 	services.suspension_changed.connect(_platform_suspension_changed)
 	services.initialize(automated)
 	wallet = Wallet.new("user://qa-journey-wallet.cfg" if journey_test else ("user://qa-camera-wallet.cfg" if camera_test else ("user://qa-run-wallet.cfg" if automated else "user://wallet.cfg")))
+	if models_test: wallet = Wallet.new("user://qa-models-wallet.cfg")
 	wallet.clock = func(): return services.now_seconds()
 	session_best = wallet.best_score()
 	_rng_setup()
@@ -107,7 +109,7 @@ func _ready() -> void:
 			assert(services.bridge != null and services.status == "local", "Web platform bridge did not initialize")
 			print("SKYJUMP_PLATFORM_BRIDGE_OK local_no_sdk_requests")
 		print("QA_WALLET_LOADED=", wallet.balance)
-		call_deferred("_run_journey_test" if journey_test else ("_run_camera_test" if camera_test else "_run_self_test"))
+		call_deferred("_run_models_test" if models_test else ("_run_journey_test" if journey_test else ("_run_camera_test" if camera_test else "_run_self_test")))
 
 func _rng_setup() -> void:
 	rng.randomize()
@@ -1445,6 +1447,10 @@ func _run_journey_test() -> void:
 	await load("res://tests/journey_checks.gd").run(self)
 	if "--journey-tour" in OS.get_cmdline_user_args():
 		load("res://tests/journey_checks.gd").show_tour(self)
+	if not OS.has_feature("web"): get_tree().quit()
+
+func _run_models_test() -> void:
+	assert(await load("res://tests/new_models_checks.gd").run(self))
 	if not OS.has_feature("web"): get_tree().quit()
 
 func _run_camera_test() -> void:

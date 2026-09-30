@@ -14,16 +14,3 @@ static func character(id: String) -> Dictionary:
 	for entry in CHARACTERS:
 		if entry.id == id: return entry
 	return {}
-
-const TRAILS = [
-	{"id": "none", "name": "Без шлейфа", "price": 0},
-	{"id": "classic", "name": "Обычный", "price": 40},
-	{"id": "dashed", "name": "Пунктирный", "price": 60},
-	{"id": "pointed", "name": "Заострённый", "price": 90},
-	{"id": "rainbow", "name": "Радужный", "price": 140},
-]
-
-static func trail(id: String) -> Dictionary:
-	for entry in TRAILS:
-		if entry.id == id: return entry
-	return {}

@@ -60,7 +60,16 @@ static func run(game: Node3D) -> bool:
 	assert(game.jetpack_fuel == Rules.JETPACK_DURATION and game.jetpack_nodes.is_empty())
 	assert(game.jetpack_visual.visible and game.ui.jetpack_meter.visible)
 	game.mode = "playing"
+	var yaw: float = game.visual.rotation.y
+	game._process(0.1)
+	assert(absf(angle_difference(yaw, game.visual.rotation.y)) > 0.4)
+	assert(game.jetpack_visual.rotation.is_equal_approx(Vector3(0, game.visual.rotation.y, game.visual.rotation.z)))
+	var attachment: Vector3 = game.visual.global_position + Basis.from_euler(game.visual.rotation) * Vector3(0, 0.72, -0.34)
+	assert(game.jetpack_visual.global_position.is_equal_approx(attachment), "Jetpack must orbit with the character, not spin in place")
 	game.pause_game()
+	yaw = game.visual.rotation.y
+	game._process(0.1)
+	assert(is_equal_approx(game.visual.rotation.y, yaw), "Paused jetpack kept rotating")
 	var fuel: float = game.jetpack_fuel
 	var at: Vector3 = game.player.position
 	await game.get_tree().physics_frame
@@ -93,6 +102,8 @@ static func run(game: Node3D) -> bool:
 	assert(game.jetpack_fuel == 0 and not game.jetpack_visual.visible)
 	assert(game.player.position.y - start_y > 55 and game.player.position.y - start_y < 85)
 	assert(game.velocity.y <= Rules.JUMP_SPEED)
+	for i in range(90): game._process(1.0 / 60)
+	assert(absf(angle_difference(game.visual.rotation.y, -0.13)) < 0.001, "Character did not return to facing forward")
 	# The normal downward landing path resumes after fuel is exhausted.
 	game._clear_platforms()
 	var landing_y: float = game.player.position.y - 1
@@ -109,7 +120,7 @@ static func run(game: Node3D) -> bool:
 	game.jetpack_fuel = 1
 	game.show_menu()
 	assert(game.jetpack_fuel == 0 and game.jetpack_nodes.is_empty())
-	print("SKYJUMP_JETPACK_OK speed_variation late_zone_speeds magnet rare_pickups swept_collection wrap thrust steering pause focus ads normal_landing reset")
+	print("SKYJUMP_JETPACK_OK spin shared_pivot face_return speed_variation late_zone_speeds magnet rare_pickups swept_collection wrap thrust steering pause focus ads normal_landing reset")
 	return true
 
 static func check_magnet(game: Node3D) -> bool:

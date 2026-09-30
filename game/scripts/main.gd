@@ -893,7 +893,11 @@ func _process(delta: float) -> void:
 	if mode == "playing" and visual != null:
 		for pickup in jetpack_nodes:
 			if is_instance_valid(pickup): pickup.animate(delta * current_pace, false)
-		if jetpack_fuel > 0: jetpack_visual.animate(delta * current_pace, true)
+		if jetpack_fuel > 0:
+			jetpack_visual.animate(delta * current_pace, true)
+			visual.rotation.y = wrapf(visual.rotation.y + delta * current_pace * 4.6, -PI, PI)
+		else:
+			visual.rotation.y = lerp_angle(visual.rotation.y, -0.13, 1.0 - exp(-10.0 * delta))
 		for coin in coin_nodes:
 			if is_instance_valid(coin): coin.rotation.y += delta * current_pace * 2.0
 		visual.rotation.z = lerpf(visual.rotation.z, -velocity.x * 0.035, delta * 10.0)
@@ -951,7 +955,8 @@ func _update_camera(delta: float) -> void:
 		# The logical player, landings, coins and source GLB materials stay unchanged.
 		visual.global_position = player.global_position + (camera.global_basis.z * 4.0 if mode != "menu" else Vector3.ZERO)
 		if jetpack_fuel > 0:
-			jetpack_visual.global_position = visual.global_position + Vector3(0, 0.72, -0.34)
+			# Rotate the attachment around the same pivot, without the GLB's scale.
+			jetpack_visual.global_position = visual.global_position + Basis.from_euler(visual.rotation) * Vector3(0, 0.72, -0.34)
 			jetpack_visual.rotation = Vector3(0, visual.rotation.y, visual.rotation.z)
 
 func _frame_game_camera(view_camera: Camera3D) -> void:

@@ -1,30 +1,25 @@
 extends Control
-
-signal held_changed(held: bool)
-var direction: int = -1
-var fingers: Dictionary = {}
-var blocked_fingers: Dictionary = {}
+## The first finger steers by its latest movement, never by screen position.
+signal direction_changed(direction: int)
+const MOTION_THRESHOLD := 1.5 # Screen pixels; filter tiny touch jitter.
+var direction := 0
+var active_finger := -1
+var pending_motion := 0.0
 var excluded_controls: Array[Control] = []
-var held := false
-var mouse_down := false
-var mouse_held := false
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	visibility_changed.connect(reset)
 
 func reset() -> void:
-	fingers.clear()
-	blocked_fingers.clear()
-	mouse_down = false
-	mouse_held = false
-	_update_held()
+	active_finger = -1
+	pending_motion = 0.0
+	_set_direction(0)
 
-func _update_held() -> void:
-	var next: bool = mouse_held or not fingers.is_empty()
-	if next != held:
-		held = next
-		held_changed.emit(held)
+func _set_direction(value: int) -> void:
+	if direction != value:
+		direction = value
+		direction_changed.emit(direction)
 
 func _over_button(point: Vector2) -> bool:
 	for control in excluded_controls:
@@ -32,29 +27,20 @@ func _over_button(point: Vector2) -> bool:
 	return false
 
 func _input(event: InputEvent) -> void:
-	if not is_visible_in_tree():
-		return
-	# Touch already steers directly; its synthetic mouse events must not stick.
-	if event is InputEventMouse and event.device == InputEvent.DEVICE_ID_EMULATION:
-		return
+	if not is_visible_in_tree(): return
+	# Mouse clicks (including synthetic touch clicks) never steer the character.
 	if event is InputEventScreenTouch:
-		if event.pressed and not event.canceled and _over_button(event.position):
-			blocked_fingers[event.index] = true
-		if event.pressed and not event.canceled and not blocked_fingers.has(event.index) and get_global_rect().has_point(event.position):
-			fingers[event.index] = true
-		else:
-			fingers.erase(event.index)
-		if not event.pressed or event.canceled: blocked_fingers.erase(event.index)
-	elif event is InputEventScreenDrag:
-		# A finger may cross the middle; a touch begun on Pause never steers.
-		if not blocked_fingers.has(event.index) and not _over_button(event.position) and get_global_rect().has_point(event.position):
-			fingers[event.index] = true
-		else:
-			fingers.erase(event.index)
-	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
-		mouse_down = event.pressed and not _over_button(event.position) and get_viewport().get_visible_rect().has_point(event.position)
-		mouse_held = mouse_down and get_global_rect().has_point(event.position)
-	elif event is InputEventMouseMotion:
-		mouse_down = mouse_down and (event.button_mask & MOUSE_BUTTON_MASK_LEFT) != 0
-		mouse_held = mouse_down and get_global_rect().has_point(event.position) and not _over_button(event.position)
-	_update_held()
+		if not event.pressed or event.canceled:
+			if event.index == active_finger: reset()
+		elif active_finger == -1 and not _over_button(event.position) and get_global_rect().has_point(event.position):
+			active_finger = event.index
+			pending_motion = 0.0
+	elif event is InputEventScreenDrag and event.index == active_finger:
+		# Unscaled deltas keep sensitivity consistent across phone/tablet sizes.
+		var delta_x: float = event.screen_relative.x
+		if is_zero_approx(delta_x): return
+		if signf(delta_x) != signf(pending_motion): pending_motion = 0.0
+		pending_motion += delta_x
+		if absf(pending_motion) >= MOTION_THRESHOLD:
+			_set_direction(1 if pending_motion > 0 else -1)
+			pending_motion = 0.0

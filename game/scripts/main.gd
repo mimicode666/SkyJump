@@ -93,7 +93,8 @@ func _ready() -> void:
 	var journey_test: bool = "--journey-test" in OS.get_cmdline_user_args()
 	var models_test: bool = "--models-test" in OS.get_cmdline_user_args()
 	var locale_test: bool = "--locale-test" in OS.get_cmdline_user_args()
-	automated = "--self-test" in OS.get_cmdline_user_args() or camera_test or journey_test or models_test or locale_test
+	var input_test: bool = "--input-test" in OS.get_cmdline_user_args()
+	automated = "--self-test" in OS.get_cmdline_user_args() or camera_test or journey_test or models_test or locale_test or input_test
 	services.availability_changed.connect(_platform_available_changed)
 	services.suspension_changed.connect(_platform_suspension_changed)
 	services.initialize(automated)
@@ -111,6 +112,7 @@ func _ready() -> void:
 	wallet = Wallet.new("user://qa-journey-wallet.cfg" if journey_test else ("user://qa-camera-wallet.cfg" if camera_test else ("user://qa-run-wallet.cfg" if automated else "user://wallet.cfg")))
 	if models_test: wallet = Wallet.new("user://qa-models-wallet.cfg")
 	if locale_test: wallet = Wallet.new("user://qa-locale-wallet.cfg")
+	if input_test: wallet = Wallet.new("user://qa-input-wallet.cfg")
 	wallet.clock = func(): return services.now_seconds()
 	session_best = wallet.best_score()
 	_rng_setup()
@@ -128,7 +130,7 @@ func _ready() -> void:
 			assert(services.bridge != null and services.status == "local", "Web platform bridge did not initialize")
 			print("SKYJUMP_PLATFORM_BRIDGE_OK local_no_sdk_requests")
 		print("QA_WALLET_LOADED=", wallet.balance)
-		call_deferred("_run_locale_test" if locale_test else ("_run_models_test" if models_test else ("_run_journey_test" if journey_test else ("_run_camera_test" if camera_test else "_run_self_test"))))
+		call_deferred("_run_input_test" if input_test else ("_run_locale_test" if locale_test else ("_run_models_test" if models_test else ("_run_journey_test" if journey_test else ("_run_camera_test" if camera_test else "_run_self_test")))))
 
 func _rng_setup() -> void:
 	rng.randomize()
@@ -466,13 +468,13 @@ func _setup_ui() -> void:
 	hint.position = Vector2(40, -44)
 	hud.add_child(hint)
 	var touch_pads: Array[Control] = []
-	for side in [-1, 1]:
-		var touch := TouchDirection.new()
-		touch.direction = side
-		touch.excluded_controls.append(pause_button)
-		touch.held_changed.connect(func(pressed: bool): _set_touch(side, pressed))
-		hud.add_child(touch)
-		touch_pads.append(touch)
+	var touch := TouchDirection.new()
+	touch.excluded_controls.append(pause_button)
+	touch.direction_changed.connect(func(direction: int):
+		touch_left = direction < 0
+		touch_right = direction > 0)
+	hud.add_child(touch)
+	touch_pads.append(touch)
 	overlay = Control.new()
 	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	root.add_child(overlay)
@@ -554,7 +556,7 @@ func _resize_ui() -> void:
 	var area := Vector2(logical)
 	portrait = area.x < area.y * 0.85
 	compact = portrait or area.y < 560 or area.x < 760
-	touch_controls = compact or DisplayServer.is_touchscreen_available()
+	touch_controls = DisplayServer.is_touchscreen_available()
 	var margin: float = 22.0 if compact else 46.0
 	var short_landscape: bool = compact and not portrait
 	var menu_width: float = area.x - margin * 2 if portrait else minf(440, area.x * 0.52 - margin)
@@ -590,7 +592,7 @@ func _resize_ui() -> void:
 	play_button.custom_minimum_size = Vector2(0, 58)
 	ui.bottom.add_theme_constant_override("separation", 8 if compact else 15)
 	ui.menu_hint.add_theme_font_size_override("font_size", 14 if compact and not portrait else 16)
-	ui.menu_hint.text = ("Касайтесь левой или правой половины\nПрыжки — автоматически" if touch_controls else "A / D или стрелки — движение\nПрыжки — автоматически") if menu_page == "home" else ""
+	ui.menu_hint.text = ("Сдвигайте палец влево или вправо\nПрыжки — автоматически" if touch_controls else "A / D или стрелки — движение\nПрыжки — автоматически") if menu_page == "home" else ""
 	ui.menu_hint.visible = menu_page == "home"
 	ui.pickers.visible = menu_page == "home"
 	ui.actions.visible = menu_page == "home"
@@ -615,10 +617,9 @@ func _resize_ui() -> void:
 	_place(ui.jetpack_meter, Vector2(area.x - margin - 112, 110), Vector2(112, 8))
 	ui.hint.visible = not touch_controls
 	_place(ui.hint, Vector2(margin, area.y - 40), Vector2(area.x - margin * 2, 24))
-	for i in range(2):
-		var pad: Control = ui.pads[i]
+	for pad in ui.pads:
 		pad.visible = mode == "playing" and not platform_suspended and not ad_pending
-		_place(pad, Vector2(i * area.x * 0.5, 0), Vector2(area.x * 0.5, area.y))
+		_place(pad, Vector2.ZERO, area)
 	ui.column.custom_minimum_size.x = minf(380, area.x - margin * 2)
 	ui.column.size.x = ui.column.custom_minimum_size.x
 	ui.column.add_theme_constant_override("separation", 12 if compact else 18)
@@ -647,12 +648,6 @@ func _button(text: String, action: Callable) -> Button:
 	button.text = text
 	button.pressed.connect(action)
 	return button
-
-func _set_touch(side: int, pressed: bool) -> void:
-	if side == -1:
-		touch_left = pressed
-	else:
-		touch_right = pressed
 
 func select_character(id: String) -> void:
 	if Catalog.character(id).is_empty(): return
@@ -1208,90 +1203,8 @@ func _run_mechanics_tests() -> void:
 		assert(signf(player.position.x) == -direction, "Screen wrap failed")
 		Input.action_release("move_left")
 		Input.action_release("move_right")
-	# Exercise real touch-event handling, simultaneous fingers and cancellation.
-	var left: Control = ui.pads[0]
-	var right: Control = ui.pads[1]
-	assert(left.is_visible_in_tree() and right.is_visible_in_tree(), "Touch controls depend on a phone breakpoint")
-	var touch := InputEventScreenTouch.new()
-	touch.index = 10
-	touch.position = get_viewport().get_stretch_transform() * left.get_global_rect().get_center()
-	touch.pressed = true
-	Input.parse_input_event(touch)
-	Input.flush_buffered_events()
-	await get_tree().process_frame
-	assert(touch_left, "Left touch did not hold")
-	var drag := InputEventScreenDrag.new()
-	drag.index = 10
-	drag.position = get_viewport().get_stretch_transform() * right.get_global_rect().get_center()
-	Input.parse_input_event(drag)
-	Input.flush_buffered_events()
-	await get_tree().process_frame
-	assert(not touch_left and touch_right, "Crossing the middle did not switch direction")
-	drag.position = touch.position
-	Input.parse_input_event(drag)
-	Input.flush_buffered_events()
-	await get_tree().process_frame
-	assert(touch_left and not touch_right)
-	var other := InputEventScreenTouch.new()
-	other.index = 11
-	other.position = get_viewport().get_stretch_transform() * right.get_global_rect().get_center()
-	other.pressed = true
-	Input.parse_input_event(other)
-	Input.flush_buffered_events()
-	await get_tree().process_frame
-	assert(touch_left and touch_right)
-	touch.pressed = false
-	touch.canceled = true
-	Input.parse_input_event(touch)
-	Input.flush_buffered_events()
-	await get_tree().process_frame
-	assert(not touch_left and touch_right)
-	pause_game()
-	assert(not touch_left and not touch_right)
-	resume_game()
-	assert(left.size.x + right.size.x == get_viewport().get_visible_rect().size.x)
-	assert(left.size.y == get_viewport().get_visible_rect().size.y, "Touch halves do not fill the screen")
-	var button_touch := InputEventScreenTouch.new()
-	button_touch.index = 12
-	button_touch.pressed = true
-	button_touch.position = ui.pause.get_global_rect().get_center()
-	for pad in ui.pads: pad._input(button_touch)
-	assert(not touch_left and not touch_right, "Pause touch steers the player")
-	var blocked_drag := InputEventScreenDrag.new()
-	blocked_drag.index = 12
-	blocked_drag.position = left.get_global_rect().get_center()
-	for pad in ui.pads: pad._input(blocked_drag)
-	assert(not touch_left and not touch_right, "A touch begun on Pause leaked into steering")
-	_reset_touch()
-	var mouse := InputEventMouseButton.new()
-	mouse.button_index = MOUSE_BUTTON_LEFT
-	mouse.pressed = true
-	mouse.position = get_viewport().get_stretch_transform() * left.get_global_rect().get_center()
-	Input.parse_input_event(mouse.duplicate())
-	Input.flush_buffered_events()
-	assert(touch_left and not touch_right, "Mouse press did not steer left")
-	var mouse_motion := InputEventMouseMotion.new()
-	mouse_motion.button_mask = MOUSE_BUTTON_MASK_LEFT
-	mouse_motion.position = get_viewport().get_stretch_transform() * right.get_global_rect().get_center()
-	Input.parse_input_event(mouse_motion)
-	Input.flush_buffered_events()
-	assert(not touch_left and touch_right, "Held mouse did not cross the middle")
-	mouse.pressed = false
-	mouse.position = mouse_motion.position
-	Input.parse_input_event(mouse.duplicate())
-	Input.flush_buffered_events()
-	assert(not touch_left and not touch_right, "Mouse release stuck")
-	mouse.pressed = true
-	mouse.device = InputEvent.DEVICE_ID_EMULATION
-	for pad in ui.pads: pad._input(mouse)
-	assert(not touch_left and not touch_right, "Synthetic mouse duplicated touch")
-	mouse.device = 0
-	mouse.position = ui.pause.get_global_rect().get_center()
-	for pad in ui.pads: pad._input(mouse)
-	mouse_motion.position = left.get_global_rect().get_center()
-	for pad in ui.pads: pad._input(mouse_motion)
-	assert(not touch_left and not touch_right, "Mouse press on Pause leaked into steering")
-	_reset_touch()
+	await load("res://tests/touch_input_checks.gd").run(self)
+	start_game()
 	_clear_platforms()
 	_add_platform(Vector3.ZERO, 0, false, "spikes")
 	player.position = Vector3(0, 2, 0)
@@ -1302,7 +1215,7 @@ func _run_mechanics_tests() -> void:
 		if mode == "gameover": break
 	assert(mode == "gameover" and player.position.y > 0, "Spikes did not end the run")
 	show_menu()
-	print("SKYJUMP_MECHANICS_OK boost moving pause wrap_left wrap_right multitouch cancel spikes catalogs tutorial touch_halves cross_middle pause_exclusion mouse_halves")
+	print("SKYJUMP_MECHANICS_OK boost moving pause wrap_left wrap_right spikes catalogs tutorial touch_gestures")
 
 func _run_currency_tests() -> void:
 	for entry in Catalog.CHARACTERS:
@@ -1473,6 +1386,10 @@ func _run_models_test() -> void:
 
 func _run_locale_test() -> void:
 	await load("res://tests/localization_checks.gd").run(self)
+	if not OS.has_feature("web"): get_tree().quit()
+
+func _run_input_test() -> void:
+	await load("res://tests/touch_input_checks.gd").run(self)
 	if not OS.has_feature("web"): get_tree().quit()
 
 func _run_camera_test() -> void:

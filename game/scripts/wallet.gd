@@ -133,4 +133,4 @@ static func clear_profile(save_path: String) -> void:
 	if storage != null: storage.clearProfile(save_path)
 
 func caption() -> String:
-	return "Монеты: %d%s" % [balance, "" if persistent else " (временно)"]
+	return tr("Монеты: %d%s") % [balance, "" if persistent else tr(" (временно)")]

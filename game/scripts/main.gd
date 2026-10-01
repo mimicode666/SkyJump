@@ -13,6 +13,7 @@ const TouchDirection = preload("res://scripts/touch_direction.gd")
 const HowToPlay = preload("res://scripts/how_to_play.gd")
 const Journey = preload("res://scripts/journey.gd")
 const BounceSound = preload("res://scripts/bounce_sound.gd")
+const Localization = preload("res://scripts/localization.gd")
 const COLORS = [Color("65b333"), Color("efaa25"), Color("935aca")]
 var characters = Characters.new()
 var selected: String = Catalog.CHARACTERS[0].id
@@ -84,16 +85,32 @@ var jetpack_fuel := 0.0
 var next_jetpack_index := 24
 
 func _ready() -> void:
+	set_process(false)
+	set_physics_process(false)
+	Localization.install()
 	Engine.max_fps = 60
 	var camera_test: bool = "--camera-test" in OS.get_cmdline_user_args()
 	var journey_test: bool = "--journey-test" in OS.get_cmdline_user_args()
 	var models_test: bool = "--models-test" in OS.get_cmdline_user_args()
-	automated = "--self-test" in OS.get_cmdline_user_args() or camera_test or journey_test or models_test
+	var locale_test: bool = "--locale-test" in OS.get_cmdline_user_args()
+	automated = "--self-test" in OS.get_cmdline_user_args() or camera_test or journey_test or models_test or locale_test
 	services.availability_changed.connect(_platform_available_changed)
 	services.suspension_changed.connect(_platform_suspension_changed)
 	services.initialize(automated)
+	if services.initializing:
+		var loading := CanvasLayer.new()
+		add_child(loading)
+		var caption := _label("Подождите…", 24)
+		caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		caption.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		caption.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		loading.add_child(caption)
+		await services.initialization_completed
+		loading.queue_free()
+	Localization.apply(services.language)
 	wallet = Wallet.new("user://qa-journey-wallet.cfg" if journey_test else ("user://qa-camera-wallet.cfg" if camera_test else ("user://qa-run-wallet.cfg" if automated else "user://wallet.cfg")))
 	if models_test: wallet = Wallet.new("user://qa-models-wallet.cfg")
+	if locale_test: wallet = Wallet.new("user://qa-locale-wallet.cfg")
 	wallet.clock = func(): return services.now_seconds()
 	session_best = wallet.best_score()
 	_rng_setup()
@@ -102,6 +119,8 @@ func _ready() -> void:
 	select_character(selected)
 	get_window().size_changed.connect(_queue_layout)
 	_resize_ui()
+	set_process(true)
+	set_physics_process(true)
 	await RenderingServer.frame_post_draw
 	if visual != null: services.mark_ready()
 	if automated:
@@ -109,7 +128,7 @@ func _ready() -> void:
 			assert(services.bridge != null and services.status == "local", "Web platform bridge did not initialize")
 			print("SKYJUMP_PLATFORM_BRIDGE_OK local_no_sdk_requests")
 		print("QA_WALLET_LOADED=", wallet.balance)
-		call_deferred("_run_models_test" if models_test else ("_run_journey_test" if journey_test else ("_run_camera_test" if camera_test else "_run_self_test")))
+		call_deferred("_run_locale_test" if locale_test else ("_run_models_test" if models_test else ("_run_journey_test" if journey_test else ("_run_camera_test" if camera_test else "_run_self_test"))))
 
 func _rng_setup() -> void:
 	rng.randomize()
@@ -657,7 +676,7 @@ func select_character(id: String) -> void:
 func _update_choice_labels() -> void:
 	for entry in Catalog.CHARACTERS:
 		if entry.id == selected:
-			ui.character_choice.text = "Персонаж: " + entry.name
+			ui.character_choice.text = tr("Персонаж: %s") % tr(entry.name)
 	ui.sound_choice.text = "Звук: вкл." if wallet.sound_enabled else "Звук: выкл."
 	for button in ui.option_list.get_children():
 		if not button is Button: continue
@@ -665,8 +684,8 @@ func _update_choice_labels() -> void:
 		if menu_page == "characters":
 			var entry := Catalog.character(button.get_meta("choice"))
 			var owned: bool = wallet.owns_character(entry.id)
-			var status: String = " · доступен" if entry.price == 0 else (" · куплен" if owned else "")
-			button.text = "%s\n%d монет%s" % [entry.name, entry.price, status]
+			var status: String = tr(" · доступен") if entry.price == 0 else (tr(" · куплен") if owned else "")
+			button.text = tr("%s\n%d монет%s") % [tr(entry.name), entry.price, status]
 	play_button.disabled = false
 	play_button.text = "Прыгать!" if menu_page == "home" else "В меню"
 	if menu_page == "characters":
@@ -675,7 +694,7 @@ func _update_choice_labels() -> void:
 		if owned: play_button.text = "Выбрать"
 		else:
 			play_button.disabled = wallet.balance < entry.price
-			play_button.text = "Не хватает %d монет" % (entry.price - wallet.balance) if play_button.disabled else "Купить за %d монет" % entry.price
+			play_button.text = tr("Не хватает %d монет") % (entry.price - wallet.balance) if play_button.disabled else tr("Купить за %d монет") % entry.price
 	if visual == null: play_button.disabled = true
 	_update_reward_buttons()
 
@@ -734,7 +753,7 @@ func _build_record_card() -> void:
 	content.add_theme_constant_override("separation", 16)
 	card.add_child(content)
 	content.add_child(_label("Рекорд за всё время", 19))
-	var best := _label("%d м" % wallet.best_score(), 44)
+	var best := _label(tr("%d м") % wallet.best_score(), 44)
 	content.add_child(best)
 	var divider := HSeparator.new()
 	content.add_child(divider)
@@ -749,7 +768,7 @@ func _build_record_card() -> void:
 	var player_name := _label("Вы", 23)
 	player_name.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(player_name)
-	var distance := _label("%d м" % wallet.best_score(), 23)
+	var distance := _label(tr("%d м") % wallet.best_score(), 23)
 	distance.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	row.add_child(distance)
 
@@ -823,7 +842,7 @@ func start_game() -> void:
 	for pad in ui.pads: pad.show()
 	_update_camera(1.0)
 	score_label.text = "0 м"
-	record_label.text = "Рекорд: %d м" % session_best
+	record_label.text = tr("Рекорд: %d м") % session_best
 	_resize_ui()
 	_sync_platform_state()
 
@@ -875,7 +894,7 @@ func _physics_process(delta: float) -> void:
 	_collect_jetpacks(previous_position)
 	highest = maxf(highest, player.position.y)
 	camera_height = maxf(camera_height, highest + 1.0)
-	score_label.text = "%d м" % int(highest * 10.0)
+	score_label.text = tr("%d м") % int(highest * 10.0)
 	while last_generated.y < camera_height + Rules.SPAWN_AHEAD:
 		_generate_platform()
 	while platforms.size() > 0 and platforms[0].y < camera_height - 10:
@@ -980,8 +999,7 @@ func _fall_height() -> float:
 	return camera_height - 7.0
 
 func _platform_available_changed() -> void:
-	# Russian is the only declared language for this MVP; other locales fall back.
-	TranslationServer.set_locale(services.language if services.language in ["ru"] else "ru")
+	Localization.apply(services.language)
 	_update_reward_buttons()
 
 func _platform_suspension_changed(suspended: bool) -> void:
@@ -1037,7 +1055,7 @@ func _request_continue() -> void:
 	var rewarded: bool = await services.request_rewarded("continue")
 	ad_pending = false
 	if rewarded and mode == "gameover" and run_id == request_run and not revive_used: _revive()
-	elif not rewarded: overlay_text.text = "Высота: %d м\nНаграда не получена.\nПопробуйте ещё." % int(highest * 10)
+	elif not rewarded: overlay_text.text = tr("Высота: %d м\nНаграда не получена.\nПопробуйте ещё.") % int(highest * 10)
 	_sync_platform_state()
 	_update_reward_buttons()
 
@@ -1068,7 +1086,7 @@ func pause_game() -> void:
 	for pad in ui.pads: pad.hide()
 	mode = "paused"
 	overlay_title.text = "Передохнём?"
-	overlay_text.text = "Высота: %d м" % int(highest * 10)
+	overlay_text.text = tr("Высота: %d м") % int(highest * 10)
 	resume_button.show()
 	ui.continue.hide()
 	overlay.show()
@@ -1090,7 +1108,7 @@ func finish_game() -> void:
 	session_best = maxi(session_best, int(highest * 10))
 	wallet.record_run(run_id, int(highest * 10), selected)
 	overlay_title.text = "Ещё один прыжок?"
-	overlay_text.text = "Высота: %d м\nРекорд: %d м\nСобрано монет: %d" % [int(highest * 10), session_best, run_coins]
+	overlay_text.text = tr("Высота: %d м\nРекорд: %d м\nСобрано монет: %d") % [int(highest * 10), session_best, run_coins]
 	resume_button.hide()
 	_update_reward_buttons()
 	overlay.show()
@@ -1451,6 +1469,10 @@ func _run_journey_test() -> void:
 
 func _run_models_test() -> void:
 	assert(await load("res://tests/new_models_checks.gd").run(self))
+	if not OS.has_feature("web"): get_tree().quit()
+
+func _run_locale_test() -> void:
+	await load("res://tests/localization_checks.gd").run(self)
 	if not OS.has_feature("web"): get_tree().quit()
 
 func _run_camera_test() -> void:

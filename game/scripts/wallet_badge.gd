@@ -23,7 +23,7 @@ func set_menu_size(in_menu: bool) -> void:
 
 func update_balance(balance: int, persistent: bool) -> void:
 	value.text = str(balance)
-	tooltip_text = "Монеты: %d%s" % [balance, "" if persistent else " (временно)"]
+	tooltip_text = tr("Монеты: %d%s") % [balance, "" if persistent else tr(" (временно)")]
 	value.modulate = Color.WHITE if persistent else Color("bc7028")
 
 func _process(delta: float) -> void:

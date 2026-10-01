@@ -8,7 +8,7 @@ function setup(options = {}) {
   const events = [], calls = [], handlers = {}, dom = {}, win = {}, scripts = [];
   let callbacks;
   const sdk = {
-    environment: {i18n: {lang: 'ru'}},
+    environment: {i18n: {lang: options.language ?? 'ru'}},
     features: {
       LoadingAPI: {ready: () => calls.push('ready')},
       GameplayAPI: {start: () => calls.push('start'), stop: () => calls.push('stop')}
@@ -24,7 +24,8 @@ function setup(options = {}) {
       setItem(key, value) { this.data.set(key, value); }
       removeItem(key) { this.data.delete(key); }
     }(),
-    location: {hostname: options.host ?? 'yandex-test.invalid'},
+    location: {hostname: options.host ?? 'yandex-test.invalid', search: options.search ?? ''},
+    URLSearchParams,
     setTimeout: options.setTimeout ?? setTimeout,
     clearTimeout, Date,
     document: {
@@ -65,6 +66,24 @@ test('ready follows actual game readiness; gameplay events are deduplicated', as
   t.bridge.setGameplay(false); t.bridge.setGameplay(false);
   assert.deepEqual(t.calls, ['ready', 'start', 'stop']);
   assert.equal(t.bridge.nowSeconds(), 1800000000);
+});
+
+test('SDK language is delivered at startup before Game Ready, query cannot override it', async () => {
+  const t = setup({language: 'en', search: '?lang=ru'});
+  await t.bridge.init();
+  assert.equal(t.events.at(-1).language, 'en');
+  assert.deepEqual(t.calls, []);
+  t.bridge.markReady();
+  assert.deepEqual(t.calls, ['ready']);
+});
+
+test('local English preview needs no SDK and Russian is the offline default', async () => {
+  for (const [search, expected] of [['', 'ru'], ['?lang=en', 'en'], ['?lang=fr', 'ru']]) {
+    const t = setup({host: '127.0.0.1', search});
+    await t.bridge.init();
+    assert.equal(t.events.at(-1).language, expected);
+    assert.deepEqual(t.scripts, []);
+  }
 });
 
 test('menu can become ready before asynchronous SDK initialization', async () => {

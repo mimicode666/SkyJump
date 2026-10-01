@@ -3,6 +3,8 @@ extends RefCounted
 signal availability_changed
 signal suspension_changed(suspended: bool)
 signal reward_completed(granted: bool)
+signal initialization_completed
+var initializing := false
 var status := "native"
 var language := "ru"
 var available := false
@@ -13,10 +15,12 @@ var _pending := false
 
 func initialize(qa: bool = false) -> void:
 	if not OS.has_feature("web"): return
+	initializing = true
 	JavaScriptBridge.eval(FileAccess.get_file_as_string("res://web/yandex_bridge.js"), true)
 	bridge = JavaScriptBridge.get_interface("SkyJumpPlatform")
 	if bridge == null:
 		status = "unavailable"
+		initializing = false
 		return
 	_event_callback = JavaScriptBridge.create_callback(_on_event)
 	bridge.listen(_event_callback)
@@ -35,6 +39,9 @@ func _deliver_event(event: Dictionary) -> void:
 			language = str(event.get("language", "ru"))
 			available = bool(event.get("available", false))
 			availability_changed.emit()
+			if initializing and status in ["ready", "local", "unavailable"]:
+				initializing = false
+				initialization_completed.emit()
 		"suspend": suspension_changed.emit(bool(event.get("value", false)))
 		"reward":
 			if _pending and int(event.get("id", -1)) == _request_id:

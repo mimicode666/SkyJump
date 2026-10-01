@@ -62,7 +62,12 @@
     });
     if (!qa) bindFocus();
     const local = ['localhost', '127.0.0.1', '[::1]', '::1', ''].includes(location.hostname);
-    if (local || qa) { status = 'local'; state(); return; }
+    if (local || qa) {
+      // Local translation preview only; hosted games always use SDK language.
+      const preview = new URLSearchParams(location.search || '').get('lang');
+      language = preview === 'en' ? 'en' : 'ru';
+      status = 'local'; state(); return;
+    }
     status = 'loading'; state();
     let timeout;
     try {
